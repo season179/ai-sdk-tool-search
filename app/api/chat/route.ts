@@ -2,7 +2,13 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createAgentUIStreamResponse, smoothStream, ToolLoopAgent, type UIMessage } from "ai";
 
 import { mockToolCount, mockTools } from "@/lib/mock-tools";
-import { type ChatMessageMetadata, toTokenUsage } from "@/lib/token-usage";
+import {
+  type ChatMessageMetadata,
+  estimateRequestTokenUsage,
+  type RequestTokenEstimate,
+  toTokenUsage,
+  toTokenUsageBreakdown,
+} from "@/lib/token-usage";
 
 export const maxDuration = 30;
 
@@ -55,6 +61,7 @@ export async function POST(req: Request) {
     const model = requireEnv("OPENROUTER_DEFAULT_MODEL");
     const openrouter = createOpenRouter({ apiKey });
     const tools = mockTools;
+    const requestEstimates: RequestTokenEstimate[] = [];
 
     const agent = new ToolLoopAgent({
       model: openrouter.chat(model),
@@ -70,6 +77,13 @@ export async function POST(req: Request) {
         delayInMs: 35,
       }),
       sendReasoning: true,
+      onStepFinish(step) {
+        const estimate = estimateRequestTokenUsage(step.request.body);
+
+        if (estimate) {
+          requestEstimates.push(estimate);
+        }
+      },
       headers: {
         "x-mock-tools": String(mockToolCount),
         "x-total-tools": String(Object.keys(tools).length),
@@ -82,6 +96,7 @@ export async function POST(req: Request) {
 
         return {
           tokenUsage: toTokenUsage(part.totalUsage),
+          tokenUsageBreakdown: toTokenUsageBreakdown(part.totalUsage, requestEstimates),
         };
       },
       onError(error) {
