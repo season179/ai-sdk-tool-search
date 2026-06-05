@@ -44,4 +44,4 @@ pnpm typecheck
 pnpm build
 ```
 
-The `/api/chat` route uses `ToolLoopAgent` with `createAgentUIStreamResponse()` and returns the selected model in the `x-openrouter-model` response header for local verification.
+The `/api/chat` route uses `ToolLoopAgent` with `createAgentUIStreamResponse()`, adds 100 mock tools, and returns `x-openrouter-model`, `x-mock-tools`, and `x-total-tools` response headers for local verification.

@@ -1,6 +1,8 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createAgentUIStreamResponse, smoothStream, ToolLoopAgent, type UIMessage } from "ai";
 
+import { mockToolCount, mockTools } from "@/lib/mock-tools";
+
 export const maxDuration = 30;
 
 const SYSTEM_PROMPT = "Be friendly, concise, and helpful.";
@@ -53,10 +55,12 @@ export async function POST(req: Request) {
     const apiKey = requireEnv("OPENROUTER_API_KEY");
     const model = requireEnv("OPENROUTER_DEFAULT_MODEL");
     const openrouter = createOpenRouter({ apiKey });
+    const tools = mockTools;
 
     const agent = new ToolLoopAgent({
-      instructions: SYSTEM_PROMPT,
+      // instructions: SYSTEM_PROMPT,
       model: openrouter.chat(model),
+      tools,
     });
 
     return createAgentUIStreamResponse({
@@ -68,13 +72,13 @@ export async function POST(req: Request) {
         delayInMs: 35,
       }),
       headers: {
+        "x-mock-tools": String(mockToolCount),
+        "x-total-tools": String(Object.keys(tools).length),
         "x-openrouter-model": model,
       },
       onError(error) {
-        console.error("OpenRouter chat stream failed", error);
-        return error instanceof Error
-          ? error.message
-          : "OpenRouter chat stream failed unexpectedly.";
+        console.error("Chat stream failed", error);
+        return error instanceof Error ? error.message : "Chat stream failed unexpectedly.";
       },
     });
   } catch (error) {
