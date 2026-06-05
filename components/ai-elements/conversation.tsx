@@ -31,22 +31,26 @@ export function ConversationEmptyState({
   children,
   className,
 }: {
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   title: string;
-  description: string;
+  description?: string;
   children?: React.ReactNode;
   className?: string;
 }) {
   return (
     <div
       className={cn(
-        "mx-auto flex min-h-80 max-w-md flex-1 flex-col items-center justify-center text-center",
+        "mx-auto flex min-h-80 max-w-xl flex-1 flex-col items-center justify-center text-center",
         className,
       )}
     >
-      <div className="mb-5 rounded-full border bg-background p-4 text-primary">{icon}</div>
+      {icon ? (
+        <div className="mb-5 rounded-full border bg-background p-4 text-primary">{icon}</div>
+      ) : null}
       <h1 className="text-2xl font-semibold tracking-normal text-foreground">{title}</h1>
-      <p className="mt-2 max-w-[36ch] text-sm leading-6 text-muted-foreground">{description}</p>
+      {description ? (
+        <p className="mt-3 max-w-[44ch] text-sm leading-6 text-muted-foreground">{description}</p>
+      ) : null}
       {children}
     </div>
   );

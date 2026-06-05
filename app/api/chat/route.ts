@@ -3,6 +3,8 @@ import { createAgentUIStreamResponse, smoothStream, ToolLoopAgent, type UIMessag
 
 export const maxDuration = 30;
 
+const SYSTEM_PROMPT = "Be friendly, concise, and helpful.";
+
 class MissingEnvironmentVariableError extends Error {
   constructor(readonly variableName: "OPENROUTER_API_KEY" | "OPENROUTER_DEFAULT_MODEL") {
     super(`${variableName} is required before chat requests can be sent.`);
@@ -53,6 +55,7 @@ export async function POST(req: Request) {
     const openrouter = createOpenRouter({ apiKey });
 
     const agent = new ToolLoopAgent({
+      instructions: SYSTEM_PROMPT,
       model: openrouter.chat(model),
     });
 

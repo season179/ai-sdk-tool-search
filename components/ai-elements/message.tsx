@@ -31,10 +31,10 @@ export function MessageContent({
   return (
     <div
       className={cn(
-        "max-w-[min(42rem,88%)] rounded-lg px-4 py-3 text-sm leading-6",
+        "px-4 py-3 text-sm leading-6",
         from === "user"
-          ? "bg-primary text-primary-foreground"
-          : "border bg-card text-card-foreground",
+          ? "max-w-[min(46rem,82%)] rounded-lg bg-primary text-primary-foreground"
+          : "max-w-[min(72rem,100%)] text-card-foreground",
         className,
       )}
       {...props}

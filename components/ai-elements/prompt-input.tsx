@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowUp, Loader2, Square } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import type * as React from "react";
+import { forwardRef } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,7 @@ export function PromptInput({ className, onSubmit, ...props }: PromptInputProps)
   return (
     <form
       className={cn(
-        "relative rounded-lg border bg-background p-2 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20",
+        "relative rounded-xl border border-border/80 bg-card/95 p-2 shadow-[0_18px_55px_-34px_rgba(15,23,42,0.55)] transition-shadow focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/10",
         className,
       )}
       onSubmit={(event) => {
@@ -31,10 +32,10 @@ export function PromptInput({ className, onSubmit, ...props }: PromptInputProps)
   );
 }
 
-export function PromptInputTextarea({
-  className,
-  ...props
-}: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export const PromptInputTextarea = forwardRef<
+  HTMLTextAreaElement,
+  React.TextareaHTMLAttributes<HTMLTextAreaElement>
+>(function PromptInputTextarea({ className, ...props }, ref) {
   return (
     <textarea
       className={cn(
@@ -42,50 +43,45 @@ export function PromptInputTextarea({
         className,
       )}
       name="message"
+      ref={ref}
       rows={3}
       {...props}
     />
   );
-}
+});
 
 export function PromptInputSubmit({
   className,
+  disabled,
+  onClick,
+  onStop,
   status,
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  onStop?: () => void;
   status: "ready" | "submitted" | "streaming" | "error";
 }) {
   const isBusy = status === "submitted" || status === "streaming";
 
   return (
     <Button
-      aria-label={isBusy ? "Sending message" : "Send message"}
+      {...props}
+      aria-label={isBusy ? "Stop response" : "Send message"}
       className={cn("absolute bottom-3 right-3 rounded-full", className)}
-      disabled={isBusy || props.disabled}
-      size="icon"
-      type="submit"
-      {...props}
-    >
-      {isBusy ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
-    </Button>
-  );
-}
+      disabled={isBusy ? !onStop : disabled}
+      onClick={(event) => {
+        if (isBusy) {
+          event.preventDefault();
+          onStop?.();
+          return;
+        }
 
-export function PromptInputStop({
-  className,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <Button
-      aria-label="Stop streaming"
-      className={cn("rounded-full", className)}
-      size="sm"
-      type="button"
-      variant="outline"
-      {...props}
+        onClick?.(event);
+      }}
+      size="icon"
+      type={isBusy ? "button" : "submit"}
     >
-      <Square className="size-3 fill-current" />
-      Stop
+      {isBusy ? <Square className="size-4 fill-current" /> : <ArrowUp className="size-4" />}
     </Button>
   );
 }
