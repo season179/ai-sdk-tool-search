@@ -69,6 +69,7 @@ export async function POST(req: Request) {
         chunking: "word",
         delayInMs: 35,
       }),
+      sendReasoning: true,
       headers: {
         "x-mock-tools": String(mockToolCount),
         "x-total-tools": String(Object.keys(tools).length),

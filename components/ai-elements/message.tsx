@@ -47,3 +47,28 @@ export function MessageResponse({ children, className }: { children: string; cla
     <Streamdown className={cn("break-words text-sm leading-6", className)}>{children}</Streamdown>
   );
 }
+
+export function MessageReasoning({
+  children,
+  className,
+  open,
+}: {
+  children: string;
+  className?: string;
+  open?: boolean;
+}) {
+  if (!children.trim()) {
+    return null;
+  }
+
+  return (
+    <details className={cn("group text-muted-foreground", className)} open={open}>
+      <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground marker:text-muted-foreground/70">
+        Thinking
+      </summary>
+      <Streamdown className="mt-2 border-l border-border pl-3 text-xs leading-6 text-muted-foreground">
+        {children}
+      </Streamdown>
+    </details>
+  );
+}

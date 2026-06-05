@@ -3,7 +3,7 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { AlertCircle } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   Conversation,
@@ -11,7 +11,12 @@ import {
   ConversationEmptyState,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import {
+  Message,
+  MessageContent,
+  MessageReasoning,
+  MessageResponse,
+} from "@/components/ai-elements/message";
 import {
   PromptInput,
   type PromptInputMessage,
@@ -118,23 +123,38 @@ export default function ChatPage() {
           {messages.length === 0 ? (
             <ConversationEmptyState title="How can I help?" />
           ) : (
-            messages.map((message) => (
-              <Fragment key={message.id}>
-                {message.parts.map((part) => {
-                  if (part.type !== "text") {
-                    return null;
-                  }
+            messages.map((message) => {
+              const reasoningText = message.parts
+                .filter((part) => part.type === "reasoning")
+                .map((part) => part.text.trim())
+                .filter(Boolean)
+                .join("\n\n");
+              const responseText = message.parts
+                .filter((part) => part.type === "text")
+                .map((part) => part.text)
+                .join("\n\n");
+              const hasResponseText = responseText.trim().length > 0;
+              const isReasoningStreaming = message.parts.some(
+                (part) => part.type === "reasoning" && part.state === "streaming",
+              );
 
-                  return (
-                    <Message from={message.role} key={`${message.id}-${part.type}`}>
-                      <MessageContent from={message.role}>
-                        <MessageResponse>{part.text}</MessageResponse>
-                      </MessageContent>
-                    </Message>
-                  );
-                })}
-              </Fragment>
-            ))
+              return (
+                <Message from={message.role} key={message.id}>
+                  <MessageContent from={message.role}>
+                    {reasoningText ? (
+                      <MessageReasoning open={isReasoningStreaming && !hasResponseText}>
+                        {reasoningText}
+                      </MessageReasoning>
+                    ) : null}
+                    {hasResponseText ? (
+                      <MessageResponse className={reasoningText ? "mt-3" : undefined}>
+                        {responseText}
+                      </MessageResponse>
+                    ) : null}
+                  </MessageContent>
+                </Message>
+              );
+            })
           )}
 
           {status === "submitted" ? (
