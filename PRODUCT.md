@@ -20,7 +20,7 @@ This project exists to test a better pattern:
 
 This repo is a controlled local experiment, not the final real-world integration.
 
-The mock tools are intentionally artificial. Their job is to create a large, measurable tool surface so we can prove the mechanics before applying the learning to a real project.
+The tools are intentionally mock-backed but realistic at the schema layer. Their job is to create a large, measurable tool surface with believable tool names, descriptions, and input parameters while keeping execution deterministic and local.
 
 The app should make it easy to compare:
 
@@ -64,7 +64,7 @@ The project is successful when it can demonstrate:
 
 ## Non-Goals For Now
 
-- The mock tools do not need to perform useful real-world work.
+- The mock-backed tools do not need to perform useful real-world work.
 - The UI does not need to become a production dashboard.
 - The first version does not need provider-native tool search.
 - The first version does not need embeddings or a complex reranker.
