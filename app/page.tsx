@@ -1,9 +1,9 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { DefaultChatTransport, type UIMessage } from "ai";
 import { AlertCircle } from "lucide-react";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   Conversation,
@@ -19,19 +19,35 @@ import {
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
+import {
+  type ChatMessageMetadata,
+  formatTokenCount,
+  getTokenUsage,
+  sumTokenUsages,
+} from "@/lib/token-usage";
 
 const BUSY_STATUSES = new Set(["submitted", "streaming"]);
+type ChatMessage = UIMessage<ChatMessageMetadata>;
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const { messages, sendMessage, status, error, stop, regenerate } = useChat({
+  const { messages, sendMessage, status, error, stop, regenerate } = useChat<ChatMessage>({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
   });
 
   const isBusy = BUSY_STATUSES.has(status);
   const canSubmit = input.trim().length > 0 && !isBusy;
+  const sessionTokenUsage = useMemo(
+    () =>
+      sumTokenUsages(
+        messages
+          .filter((message) => message.role === "assistant")
+          .map((message) => getTokenUsage(message.metadata)),
+      ),
+    [messages],
+  );
 
   const focusInput = useCallback(() => {
     requestAnimationFrame(() => {
@@ -87,6 +103,12 @@ export default function ChatPage() {
               <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
               <span>{isBusy ? "Responding" : "Ready"}</span>
             </div>
+          </div>
+          <div className="shrink-0 text-right">
+            <p className="text-xs text-muted-foreground">Session tokens</p>
+            <p className="tabular-nums text-sm font-semibold text-foreground">
+              {formatTokenCount(sessionTokenUsage.totalTokens)}
+            </p>
           </div>
         </div>
       </header>

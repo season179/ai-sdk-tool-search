@@ -2,10 +2,9 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createAgentUIStreamResponse, smoothStream, ToolLoopAgent, type UIMessage } from "ai";
 
 import { mockToolCount, mockTools } from "@/lib/mock-tools";
+import { type ChatMessageMetadata, toTokenUsage } from "@/lib/token-usage";
 
 export const maxDuration = 30;
-
-const SYSTEM_PROMPT = "Be friendly, concise, and helpful.";
 
 class MissingEnvironmentVariableError extends Error {
   constructor(readonly variableName: "OPENROUTER_API_KEY" | "OPENROUTER_DEFAULT_MODEL") {
@@ -34,10 +33,10 @@ function configErrorResponse(error: MissingEnvironmentVariableError) {
 }
 
 export async function POST(req: Request) {
-  let messages: UIMessage[];
+  let messages: UIMessage<ChatMessageMetadata>[];
 
   try {
-    const body: { messages?: UIMessage[] } = await req.json();
+    const body: { messages?: UIMessage<ChatMessageMetadata>[] } = await req.json();
 
     if (!Array.isArray(body.messages)) {
       return Response.json(
@@ -58,7 +57,6 @@ export async function POST(req: Request) {
     const tools = mockTools;
 
     const agent = new ToolLoopAgent({
-      // instructions: SYSTEM_PROMPT,
       model: openrouter.chat(model),
       tools,
     });
@@ -75,6 +73,15 @@ export async function POST(req: Request) {
         "x-mock-tools": String(mockToolCount),
         "x-total-tools": String(Object.keys(tools).length),
         "x-openrouter-model": model,
+      },
+      messageMetadata({ part }) {
+        if (part.type !== "finish") {
+          return undefined;
+        }
+
+        return {
+          tokenUsage: toTokenUsage(part.totalUsage),
+        };
       },
       onError(error) {
         console.error("Chat stream failed", error);
