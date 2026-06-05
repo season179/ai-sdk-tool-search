@@ -8,24 +8,33 @@ export type TokenUsage = {
   totalTokens?: number;
 };
 
+export type RequestToolEstimate = {
+  name: string;
+  chars: number;
+};
+
 export type RequestTokenEstimate = {
   systemPromptChars: number;
   messageChars: number;
   toolChars: number;
-  settingsChars: number;
+  requestOptionChars: number;
   messageCount: number;
   toolCount: number;
+  tools: RequestToolEstimate[];
 };
 
-export type TokenUsageBreakdownCategoryId =
-  | "systemPrompt"
-  | "messages"
-  | "tools"
-  | "requestSettings";
+export type TokenUsageBreakdownCategoryId = "systemPrompt" | "messages" | "tools";
 
 export type TokenUsageBreakdownCategory = {
   id: TokenUsageBreakdownCategoryId;
   label: string;
+  tokens: number;
+  percentage: number;
+  chars: number;
+};
+
+export type TokenUsageToolBreakdown = {
+  name: string;
   tokens: number;
   percentage: number;
   chars: number;
@@ -37,7 +46,10 @@ export type TokenUsageBreakdown = {
   requestCount: number;
   messageCount: number;
   toolCount: number;
+  excludedRequestOptionChars: number;
+  excludedRequestOptionTokens: number;
   categories: TokenUsageBreakdownCategory[];
+  tools: TokenUsageToolBreakdown[];
 };
 
 export type ChatMessageMetadata = {
@@ -89,7 +101,12 @@ export function getTokenUsageBreakdown(metadata: unknown): TokenUsageBreakdown |
     requestCount: readPositiveInteger(breakdown.requestCount) ?? 1,
     messageCount: readPositiveInteger(breakdown.messageCount) ?? 0,
     toolCount: readPositiveInteger(breakdown.toolCount) ?? 0,
+    excludedRequestOptionChars: readPositiveInteger(breakdown.excludedRequestOptionChars) ?? 0,
+    excludedRequestOptionTokens: readPositiveInteger(breakdown.excludedRequestOptionTokens) ?? 0,
     categories,
+    tools: Array.isArray(breakdown.tools)
+      ? breakdown.tools.map(readToolBreakdown).filter(isDefined)
+      : [],
   };
 }
 
@@ -104,22 +121,25 @@ export function estimateRequestTokenUsage(body: unknown): RequestTokenEstimate |
   const systemMessages = messages.filter(isSystemMessage);
   const nonSystemMessages = messages.filter((message) => !isSystemMessage(message));
   const tools = requestBody.tools ?? requestBody.functions;
-  const settings = { ...requestBody };
+  const requestOptions = { ...requestBody };
 
-  delete settings.messages;
-  delete settings.tools;
-  delete settings.functions;
+  delete requestOptions.messages;
+  delete requestOptions.tools;
+  delete requestOptions.functions;
+
+  const toolEstimates = estimateToolSchemas(tools);
 
   const estimate: RequestTokenEstimate = {
     systemPromptChars: jsonLength(systemMessages),
     messageChars: jsonLength(nonSystemMessages),
     toolChars: jsonLength(tools),
-    settingsChars: jsonLength(settings),
+    requestOptionChars: jsonLength(requestOptions),
     messageCount: messages.length,
     toolCount: countItems(tools),
+    tools: toolEstimates,
   };
 
-  return estimateTotalChars(estimate) > 0 ? estimate : undefined;
+  return estimatePromptChars(estimate) > 0 ? estimate : undefined;
 }
 
 export function toTokenUsageBreakdown(
@@ -128,12 +148,12 @@ export function toTokenUsageBreakdown(
 ): TokenUsageBreakdown | undefined {
   const aggregate = sumRequestTokenEstimates(requestEstimates);
 
-  if (!aggregate || estimateTotalChars(aggregate) === 0) {
+  if (!aggregate || estimatePromptChars(aggregate) === 0) {
     return undefined;
   }
 
   const inputTokens = usage.inputTokens;
-  const targetTokens = inputTokens ?? estimateTokensFromChars(estimateTotalChars(aggregate));
+  const targetTokens = inputTokens ?? estimateTokensFromChars(estimatePromptChars(aggregate));
   const categories = allocateCategoryTokens(
     [
       {
@@ -151,14 +171,11 @@ export function toTokenUsageBreakdown(
         label: "Conversation",
         chars: aggregate.messageChars,
       },
-      {
-        id: "requestSettings",
-        label: "Request options",
-        chars: aggregate.settingsChars,
-      },
     ],
     targetTokens,
   );
+  const toolCategory = categories.find((category) => category.id === "tools");
+  const tools = allocateToolTokens(aggregate.tools, toolCategory?.tokens ?? 0);
 
   return {
     inputTokens,
@@ -166,7 +183,11 @@ export function toTokenUsageBreakdown(
     requestCount: requestEstimates.length,
     messageCount: aggregate.messageCount,
     toolCount: aggregate.toolCount,
+    excludedRequestOptionChars: aggregate.requestOptionChars,
+    excludedRequestOptionTokens:
+      aggregate.requestOptionChars > 0 ? estimateTokensFromChars(aggregate.requestOptionChars) : 0,
     categories,
+    tools,
   };
 }
 
@@ -250,6 +271,51 @@ function allocateCategoryTokens(
     .sort((first, second) => second.tokens - first.tokens);
 }
 
+function allocateToolTokens(
+  tools: RequestToolEstimate[],
+  targetTokens: number,
+): TokenUsageToolBreakdown[] {
+  const visibleTools = tools.filter((tool) => tool.chars > 0);
+  const totalChars = visibleTools.reduce((sum, tool) => sum + tool.chars, 0);
+
+  if (totalChars === 0 || targetTokens <= 0) {
+    return [];
+  }
+
+  const allocations = visibleTools.map((tool) => {
+    const exactTokens = (tool.chars / totalChars) * targetTokens;
+    const tokens = Math.floor(exactTokens);
+
+    return {
+      ...tool,
+      exactTokens,
+      tokens,
+    };
+  });
+  let remainingTokens = targetTokens - allocations.reduce((sum, tool) => sum + tool.tokens, 0);
+
+  for (const tool of [...allocations].sort(
+    (first, second) =>
+      second.exactTokens -
+      Math.floor(second.exactTokens) -
+      (first.exactTokens - Math.floor(first.exactTokens)),
+  )) {
+    if (remainingTokens <= 0) {
+      break;
+    }
+
+    tool.tokens += 1;
+    remainingTokens -= 1;
+  }
+
+  return allocations
+    .map(({ exactTokens: _exactTokens, ...tool }) => ({
+      ...tool,
+      percentage: targetTokens > 0 ? (tool.tokens / targetTokens) * 100 : 0,
+    }))
+    .sort((first, second) => second.tokens - first.tokens || first.name.localeCompare(second.name));
+}
+
 function compactTokenUsage(usage: TokenUsage): TokenUsage {
   return Object.fromEntries(
     Object.entries(usage).filter((entry): entry is [keyof TokenUsage, number] => {
@@ -294,13 +360,29 @@ function readBreakdownCategory(value: unknown): TokenUsageBreakdownCategory | un
   };
 }
 
+function readToolBreakdown(value: unknown): TokenUsageToolBreakdown | undefined {
+  if (!isRecord(value) || typeof value.name !== "string") {
+    return undefined;
+  }
+
+  const tokens = readTokenCount(value.tokens);
+  const percentage = readTokenCount(value.percentage);
+  const chars = readTokenCount(value.chars);
+
+  if (tokens == null || percentage == null || chars == null) {
+    return undefined;
+  }
+
+  return {
+    name: value.name,
+    tokens,
+    percentage,
+    chars,
+  };
+}
+
 function isBreakdownCategoryId(value: unknown): value is TokenUsageBreakdownCategoryId {
-  return (
-    value === "systemPrompt" ||
-    value === "messages" ||
-    value === "tools" ||
-    value === "requestSettings"
-  );
+  return value === "systemPrompt" || value === "messages" || value === "tools";
 }
 
 function parseRequestBody(body: unknown): unknown {
@@ -347,10 +429,44 @@ function countItems(value: unknown): number {
   return value == null ? 0 : 1;
 }
 
-function estimateTotalChars(estimate: RequestTokenEstimate) {
-  return (
-    estimate.systemPromptChars + estimate.messageChars + estimate.toolChars + estimate.settingsChars
-  );
+function estimateToolSchemas(value: unknown): RequestToolEstimate[] {
+  if (Array.isArray(value)) {
+    return value.map((toolSchema, index) => ({
+      chars: jsonLength(toolSchema),
+      name: readToolName(toolSchema) ?? `tool_${index + 1}`,
+    }));
+  }
+
+  if (isRecord(value)) {
+    return Object.entries(value).map(([key, toolSchema]) => ({
+      chars: jsonLength({ [key]: toolSchema }),
+      name: readToolName(toolSchema) ?? key,
+    }));
+  }
+
+  return [];
+}
+
+function readToolName(value: unknown): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  if (typeof value.name === "string" && value.name.trim()) {
+    return value.name;
+  }
+
+  if (isRecord(value.function) && typeof value.function.name === "string") {
+    const name = value.function.name.trim();
+
+    return name || undefined;
+  }
+
+  return undefined;
+}
+
+function estimatePromptChars(estimate: RequestTokenEstimate) {
+  return estimate.systemPromptChars + estimate.messageChars + estimate.toolChars;
 }
 
 function sumRequestTokenEstimates(
@@ -365,19 +481,34 @@ function sumRequestTokenEstimates(
       systemPromptChars: total.systemPromptChars + estimate.systemPromptChars,
       messageChars: total.messageChars + estimate.messageChars,
       toolChars: total.toolChars + estimate.toolChars,
-      settingsChars: total.settingsChars + estimate.settingsChars,
+      requestOptionChars: total.requestOptionChars + estimate.requestOptionChars,
       messageCount: total.messageCount + estimate.messageCount,
       toolCount: Math.max(total.toolCount, estimate.toolCount),
+      tools: sumToolEstimates(total.tools, estimate.tools),
     }),
     {
       systemPromptChars: 0,
       messageChars: 0,
       toolChars: 0,
-      settingsChars: 0,
+      requestOptionChars: 0,
       messageCount: 0,
       toolCount: 0,
+      tools: [],
     },
   );
+}
+
+function sumToolEstimates(
+  first: RequestToolEstimate[],
+  second: RequestToolEstimate[],
+): RequestToolEstimate[] {
+  const byName = new Map<string, number>();
+
+  for (const tool of [...first, ...second]) {
+    byName.set(tool.name, (byName.get(tool.name) ?? 0) + tool.chars);
+  }
+
+  return Array.from(byName, ([name, chars]) => ({ name, chars }));
 }
 
 function estimateTokensFromChars(chars: number) {

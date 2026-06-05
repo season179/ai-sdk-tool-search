@@ -248,7 +248,7 @@ function TokenUsageMenu({
           <div>
             <p className="text-sm font-semibold text-foreground">Last request</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              OpenRouter totals are exact. The split below estimates what made up the input.
+              OpenRouter totals are exact. The input split estimates model-readable content.
             </p>
           </div>
           <p className="shrink-0 tabular-nums text-sm font-semibold text-foreground">
@@ -270,7 +270,7 @@ function TokenUsageMenu({
 function ProviderUsageGrid({ usage }: { usage: TokenUsage }) {
   const rows = [
     {
-      description: "Prompt tokens: chat history, tools, and options sent in",
+      description: "Prompt tokens: conversation, instructions, and tool definitions",
       label: "Sent to model",
       value: usage.inputTokens,
     },
@@ -355,7 +355,56 @@ function PromptAllocation({ breakdown }: { breakdown: TokenUsageBreakdown }) {
           );
         })}
       </div>
+
+      {breakdown.excludedRequestOptionTokens > 0 ? (
+        <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
+          API options excluded: model, streaming, routing, and generation settings are request
+          metadata, not prompt content.
+        </p>
+      ) : null}
+
+      {breakdown.tools.length > 0 ? <ToolSchemaBreakdown breakdown={breakdown} /> : null}
     </div>
+  );
+}
+
+function ToolSchemaBreakdown({ breakdown }: { breakdown: TokenUsageBreakdown }) {
+  const visibleTools = breakdown.tools.slice(0, 8);
+  const hiddenTools = breakdown.tools.slice(8);
+  const hiddenTokens = hiddenTools.reduce((sum, tool) => sum + tool.tokens, 0);
+  const hiddenPercentage = hiddenTools.reduce((sum, tool) => sum + tool.percentage, 0);
+
+  return (
+    <details className="mt-4 rounded-md border border-border/80 px-3 py-2">
+      <summary className="cursor-pointer list-none text-xs font-semibold text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/30 [&::-webkit-details-marker]:hidden">
+        <span>Tool schema breakdown</span>
+        <span className="ml-2 font-normal text-muted-foreground">
+          top {visibleTools.length} of {breakdown.tools.length}
+        </span>
+      </summary>
+      <div className="mt-3 space-y-2">
+        {visibleTools.map((tool) => (
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-xs" key={tool.name}>
+            <span className="min-w-0 truncate text-muted-foreground" title={tool.name}>
+              {tool.name}
+            </span>
+            <span className="shrink-0 tabular-nums text-foreground">
+              {formatTokenCount(tool.tokens)} · {formatTokenPercentage(tool.percentage)}
+            </span>
+          </div>
+        ))}
+        {hiddenTools.length > 0 ? (
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-t border-border/70 pt-2 text-xs">
+            <span className="min-w-0 text-muted-foreground">
+              Other {hiddenTools.length} tool schemas
+            </span>
+            <span className="shrink-0 tabular-nums text-foreground">
+              {formatTokenCount(hiddenTokens)} · {formatTokenPercentage(hiddenPercentage)}
+            </span>
+          </div>
+        ) : null}
+      </div>
+    </details>
   );
 }
 
@@ -379,11 +428,6 @@ function getBreakdownCategoryCopy(
         description: "Hidden app and system instructions, when present",
         label: "System instructions",
       };
-    case "requestSettings":
-      return {
-        description: "Model, streaming, routing, and generation parameters",
-        label: "Request options",
-      };
   }
 }
 
@@ -395,8 +439,6 @@ function getBreakdownBarColor(id: TokenUsageBreakdown["categories"][number]["id"
       return "bg-sky-500";
     case "systemPrompt":
       return "bg-violet-500";
-    case "requestSettings":
-      return "bg-slate-400";
   }
 }
 
@@ -408,7 +450,5 @@ function getBreakdownDotColor(id: TokenUsageBreakdown["categories"][number]["id"
       return "bg-sky-500";
     case "systemPrompt":
       return "bg-violet-500";
-    case "requestSettings":
-      return "bg-slate-400";
   }
 }
