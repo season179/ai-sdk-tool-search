@@ -11,9 +11,9 @@ Modern agents can accumulate dozens or hundreds of tools. Exposing all of them a
 This project exists to test a better pattern:
 
 - keep a large registry of available tools
-- decide per turn whether tools are needed at all
-- expose only 0-10 directly relevant tools to the main agent
-- provide a recovery path when the selector misses
+- expose a tiny search/describe/call bridge instead of every schema
+- let the model discover and invoke deferred tools on demand
+- keep an all-tools baseline for comparison
 - make the token savings and routing decisions visible
 
 ## What This Repo Is
@@ -24,13 +24,12 @@ The tools are intentionally mock-backed but realistic at the schema layer. Their
 
 The app should make it easy to compare:
 
-- all tools exposed vs routed tools exposed
+- all tools exposed vs search bridge exposed
 - prompt tokens spent on tool schemas
 - per-tool schema size
-- which tools were selected
-- why those tools were selected
-- when no tools were sent
-- when recovery search was needed
+- which tools were searched, described, and called
+- how much schema cost was deferred
+- when the bridge failed to find or call a tool
 
 ## Current Scaffold
 
@@ -42,23 +41,23 @@ Existing side quests like token usage display, reasoning display, and prompt all
 
 For each user turn:
 
-1. Decide whether the turn needs tools.
-2. If no tools are needed, send 0 tools.
-3. If tools are likely needed, select 1-10 direct tools from a compact tool index.
-4. If selection confidence is low, include a small recovery/search tool.
-5. Run the main agent with only that routed tool surface.
-6. Show the routing decision and token impact in the UI.
+1. Keep the full tool catalog server-side.
+2. Send only `tool_search`, `tool_describe`, and `tool_call` to the model.
+3. Let the model search the catalog when it needs a deferred capability.
+4. Return full schema for one selected tool through `tool_describe`.
+5. Invoke the underlying mock-backed tool through `tool_call`.
+6. Show the search trace and token impact in the UI.
 
 ## Success Criteria
 
 The project is successful when it can demonstrate:
 
-- no-tool turns actually send 0 tool schemas
-- tool-using turns send only a small selected subset
-- the UI shows selected tools and selection reasons
-- the UI shows omitted/all-tool cost for comparison
+- search mode sends only the bridge schemas
+- all-tools mode remains available as a baseline
+- the UI shows searched, described, and called tools
+- the UI shows deferred/all-tool cost for comparison
 - per-tool schema cost is visible
-- the selector has a recovery path for missed tools
+- the bridge has a recovery path for missed tools
 - total token usage drops substantially compared with exposing all tools
 - behavior remains understandable and debuggable
 

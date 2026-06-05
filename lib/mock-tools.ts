@@ -2,9 +2,9 @@ import { jsonSchema, type ToolSet, tool } from "ai";
 
 type JsonSchemaProperty = Record<string, unknown>;
 
-type RealisticToolInput = Record<string, unknown>;
+export type RealisticToolInput = Record<string, unknown>;
 
-type RealisticToolOutput = {
+export type RealisticToolOutput = {
   status: "mocked";
   toolName: string;
   service: string;
@@ -18,7 +18,7 @@ type RealisticToolOutput = {
   }>;
 };
 
-type RealisticToolSpec = {
+export type RealisticToolSpec = {
   name: string;
   title: string;
   service: string;
@@ -3106,6 +3106,8 @@ if (toolSpecs.length !== 200) {
   throw new Error(`Expected 200 realistic mock tools, found ${toolSpecs.length}.`);
 }
 
+const toolSpecByName = new Map(toolSpecs.map((spec) => [spec.name, spec]));
+
 function buildMockRecords(spec: RealisticToolSpec, input: RealisticToolInput) {
   const primary = Object.entries(input).find(([, value]) => typeof value === "string")?.[1];
   const baseLabel = typeof primary === "string" && primary.trim() ? primary.trim() : spec.title;
@@ -3115,6 +3117,51 @@ function buildMockRecords(spec: RealisticToolSpec, input: RealisticToolInput) {
     label: `${baseLabel} mock ${index + 1}`,
     url: `https://example.invalid/${spec.service}/${spec.name}/${index + 1}`,
   }));
+}
+
+export function getMockToolSpec(name: string) {
+  return toolSpecByName.get(name);
+}
+
+export function getMockToolParameterSchema(spec: RealisticToolSpec) {
+  return {
+    type: "object",
+    properties: spec.properties,
+    required: spec.required,
+    additionalProperties: false,
+  };
+}
+
+export function getMockToolFunctionSchema(spec: RealisticToolSpec) {
+  return {
+    type: "function",
+    function: {
+      name: spec.name,
+      description: spec.description,
+      parameters: getMockToolParameterSchema(spec),
+    },
+  };
+}
+
+export function executeMockTool(
+  name: string,
+  input: RealisticToolInput,
+): RealisticToolOutput | undefined {
+  const spec = getMockToolSpec(name);
+
+  if (!spec) {
+    return undefined;
+  }
+
+  return {
+    status: "mocked",
+    toolName: spec.name,
+    service: spec.service,
+    action: spec.action,
+    summary: `Mocked ${spec.service} ${spec.action} operation for ${spec.name}.`,
+    receivedInput: input,
+    records: buildMockRecords(spec, input),
+  };
 }
 
 export const mockTools: ToolSet = Object.fromEntries(
@@ -3130,18 +3177,12 @@ export const mockTools: ToolSet = Object.fromEntries(
         additionalProperties: false,
       }),
       execute(input) {
-        return {
-          status: "mocked",
-          toolName: spec.name,
-          service: spec.service,
-          action: spec.action,
-          summary: `Mocked ${spec.service} ${spec.action} operation for ${spec.name}.`,
-          receivedInput: input,
-          records: buildMockRecords(spec, input),
-        };
+        return executeMockTool(spec.name, input) as RealisticToolOutput;
       },
     }),
   ]),
 );
+
+export const mockToolSpecs = toolSpecs;
 
 export const mockToolCount = toolSpecs.length;

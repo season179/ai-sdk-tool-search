@@ -52,9 +52,59 @@ export type TokenUsageBreakdown = {
   tools: TokenUsageToolBreakdown[];
 };
 
+export type ToolSearchMode = "all" | "search";
+
+export type ToolSearchMatch = {
+  name: string;
+  title: string;
+  service: string;
+  score: number;
+};
+
+export type ToolSearchTraceEvent =
+  | {
+      kind: "search";
+      query: string;
+      limit: number;
+      totalAvailable: number;
+      matches: ToolSearchMatch[];
+    }
+  | {
+      kind: "describe";
+      name: string;
+      found: boolean;
+      title?: string;
+      service?: string;
+    }
+  | {
+      kind: "call";
+      name: string;
+      found: boolean;
+      title?: string;
+      service?: string;
+      action?: string;
+    };
+
+export type ToolSearchMetadata = {
+  mode: ToolSearchMode;
+  availableToolCount: number;
+  sentToolCount: number;
+  deferredToolCount: number;
+  requestCount: number;
+  catalogSchemaTokens: number;
+  sentSchemaTokens: number;
+  baselineSchemaTokens: number;
+  savedSchemaTokens: number;
+  searchCount: number;
+  describeCount: number;
+  callCount: number;
+  trace: ToolSearchTraceEvent[];
+};
+
 export type ChatMessageMetadata = {
   tokenUsage?: TokenUsage;
   tokenUsageBreakdown?: TokenUsageBreakdown;
+  toolSearch?: ToolSearchMetadata;
 };
 
 export function toTokenUsage(usage: LanguageModelUsage): TokenUsage {
@@ -106,6 +156,65 @@ export function getTokenUsageBreakdown(metadata: unknown): TokenUsageBreakdown |
     categories,
     tools: Array.isArray(breakdown.tools)
       ? breakdown.tools.map(readToolBreakdown).filter(isDefined)
+      : [],
+  };
+}
+
+export function getToolSearchMetadata(metadata: unknown): ToolSearchMetadata | undefined {
+  if (!isRecord(metadata) || !isRecord(metadata.toolSearch)) {
+    return undefined;
+  }
+
+  const toolSearch = metadata.toolSearch;
+  const mode = toolSearch.mode === "all" || toolSearch.mode === "search" ? toolSearch.mode : null;
+
+  if (!mode) {
+    return undefined;
+  }
+
+  const availableToolCount = readPositiveInteger(toolSearch.availableToolCount);
+  const sentToolCount = readPositiveInteger(toolSearch.sentToolCount);
+  const deferredToolCount = readPositiveInteger(toolSearch.deferredToolCount);
+  const requestCount = readPositiveInteger(toolSearch.requestCount);
+  const catalogSchemaTokens = readPositiveInteger(toolSearch.catalogSchemaTokens);
+  const sentSchemaTokens = readPositiveInteger(toolSearch.sentSchemaTokens);
+  const baselineSchemaTokens = readPositiveInteger(toolSearch.baselineSchemaTokens);
+  const savedSchemaTokens = readPositiveInteger(toolSearch.savedSchemaTokens);
+  const searchCount = readPositiveInteger(toolSearch.searchCount);
+  const describeCount = readPositiveInteger(toolSearch.describeCount);
+  const callCount = readPositiveInteger(toolSearch.callCount);
+
+  if (
+    availableToolCount == null ||
+    sentToolCount == null ||
+    deferredToolCount == null ||
+    requestCount == null ||
+    catalogSchemaTokens == null ||
+    sentSchemaTokens == null ||
+    baselineSchemaTokens == null ||
+    savedSchemaTokens == null ||
+    searchCount == null ||
+    describeCount == null ||
+    callCount == null
+  ) {
+    return undefined;
+  }
+
+  return {
+    mode,
+    availableToolCount,
+    sentToolCount,
+    deferredToolCount,
+    requestCount,
+    catalogSchemaTokens,
+    sentSchemaTokens,
+    baselineSchemaTokens,
+    savedSchemaTokens,
+    searchCount,
+    describeCount,
+    callCount,
+    trace: Array.isArray(toolSearch.trace)
+      ? toolSearch.trace.map(readToolSearchTraceEvent).filter(isDefined)
       : [],
   };
 }
@@ -511,8 +620,90 @@ function sumToolEstimates(
   return Array.from(byName, ([name, chars]) => ({ name, chars }));
 }
 
-function estimateTokensFromChars(chars: number) {
+export function estimateTokensFromChars(chars: number) {
+  if (chars <= 0) {
+    return 0;
+  }
+
   return Math.max(1, Math.round(chars / 4));
+}
+
+function readToolSearchTraceEvent(value: unknown): ToolSearchTraceEvent | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  if (value.kind === "search") {
+    const query = typeof value.query === "string" ? value.query : "";
+    const limit = readPositiveInteger(value.limit);
+    const totalAvailable = readPositiveInteger(value.totalAvailable);
+
+    if (!query || limit == null || totalAvailable == null) {
+      return undefined;
+    }
+
+    return {
+      kind: "search",
+      query,
+      limit,
+      totalAvailable,
+      matches: Array.isArray(value.matches)
+        ? value.matches.map(readToolSearchMatch).filter(isDefined)
+        : [],
+    };
+  }
+
+  if (value.kind === "describe") {
+    const name = typeof value.name === "string" ? value.name : "";
+
+    if (!name || typeof value.found !== "boolean") {
+      return undefined;
+    }
+
+    return {
+      kind: "describe",
+      name,
+      found: value.found,
+      service: typeof value.service === "string" ? value.service : undefined,
+      title: typeof value.title === "string" ? value.title : undefined,
+    };
+  }
+
+  if (value.kind === "call") {
+    const name = typeof value.name === "string" ? value.name : "";
+
+    if (!name || typeof value.found !== "boolean") {
+      return undefined;
+    }
+
+    return {
+      action: typeof value.action === "string" ? value.action : undefined,
+      found: value.found,
+      kind: "call",
+      name,
+      service: typeof value.service === "string" ? value.service : undefined,
+      title: typeof value.title === "string" ? value.title : undefined,
+    };
+  }
+
+  return undefined;
+}
+
+function readToolSearchMatch(value: unknown): ToolSearchMatch | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const name = typeof value.name === "string" ? value.name : "";
+  const title = typeof value.title === "string" ? value.title : "";
+  const service = typeof value.service === "string" ? value.service : "";
+  const score = readTokenCount(value.score);
+
+  if (!name || !title || !service || score == null) {
+    return undefined;
+  }
+
+  return { name, score, service, title };
 }
 
 function readPositiveInteger(value: unknown): number | undefined {

@@ -6,13 +6,20 @@ import {
   type ChatMessageMetadata,
   estimateRequestTokenUsage,
   type RequestTokenEstimate,
+  type ToolSearchTraceEvent,
   toTokenUsage,
   toTokenUsageBreakdown,
 } from "@/lib/token-usage";
+import {
+  buildToolSearchMetadata,
+  createToolSearchTools,
+  resolveToolExposureMode,
+} from "@/lib/tool-search";
 
 export const maxDuration = 30;
 
-const SYSTEM_PROMPT = "Be friendly, concise, and helpful.";
+const SYSTEM_PROMPT =
+  "Be friendly, concise, and helpful. Use tool_search, tool_describe, and tool_call when hidden tools are needed.";
 
 class MissingEnvironmentVariableError extends Error {
   constructor(readonly variableName: "OPENROUTER_API_KEY" | "OPENROUTER_DEFAULT_MODEL") {
@@ -62,7 +69,9 @@ export async function POST(req: Request) {
     const apiKey = requireEnv("OPENROUTER_API_KEY");
     const model = requireEnv("OPENROUTER_DEFAULT_MODEL");
     const openrouter = createOpenRouter({ apiKey });
-    const tools = mockTools;
+    const toolExposureMode = resolveToolExposureMode(process.env.TOOL_EXPOSURE_MODE);
+    const toolSearchTrace: ToolSearchTraceEvent[] = [];
+    const tools = toolExposureMode === "all" ? mockTools : createToolSearchTools(toolSearchTrace);
     const requestEstimates: RequestTokenEstimate[] = [];
 
     const agent = new ToolLoopAgent({
@@ -91,6 +100,7 @@ export async function POST(req: Request) {
         "x-mock-tools": String(mockToolCount),
         "x-total-tools": String(Object.keys(tools).length),
         "x-openrouter-model": model,
+        "x-tool-exposure-mode": toolExposureMode,
       },
       messageMetadata({ part }) {
         if (part.type !== "finish") {
@@ -100,6 +110,11 @@ export async function POST(req: Request) {
         return {
           tokenUsage: toTokenUsage(part.totalUsage),
           tokenUsageBreakdown: toTokenUsageBreakdown(part.totalUsage, requestEstimates),
+          toolSearch: buildToolSearchMetadata({
+            mode: toolExposureMode,
+            requestEstimates,
+            trace: toolSearchTrace,
+          }),
         };
       },
       onError(error) {

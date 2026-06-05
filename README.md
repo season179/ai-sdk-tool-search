@@ -16,9 +16,11 @@ A small Next.js App Router chatbot using TypeScript, React 19, Tailwind CSS 4, A
    ```bash
    OPENROUTER_API_KEY=...
    OPENROUTER_DEFAULT_MODEL=...
+   TOOL_EXPOSURE_MODE=search
    ```
 
    `OPENROUTER_DEFAULT_MODEL` is used directly as the chat model. The app intentionally fails with a clear server error if either variable is missing.
+   `TOOL_EXPOSURE_MODE` is optional. `search` sends only the tool-search bridge tools; `all` sends every mock-backed tool schema for baseline comparison.
 
 4. Start the app:
 
@@ -44,4 +46,4 @@ pnpm typecheck
 pnpm build
 ```
 
-The `/api/chat` route uses `ToolLoopAgent` with `createAgentUIStreamResponse()`, adds 200 partially real mock-backed tools, and returns `x-openrouter-model`, `x-mock-tools`, and `x-total-tools` response headers for local verification.
+The `/api/chat` route uses `ToolLoopAgent` with `createAgentUIStreamResponse()`. By default it exposes a local BM25 tool-search bridge over 200 partially real mock-backed tools, and returns `x-openrouter-model`, `x-mock-tools`, `x-total-tools`, and `x-tool-exposure-mode` response headers for local verification.
