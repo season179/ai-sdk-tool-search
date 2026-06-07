@@ -5,11 +5,16 @@ import {
   getMockToolFunctionSchema,
   getMockToolParameterSchema,
   getMockToolSpec,
-  mockToolCount,
   mockToolSpecs,
   type RealisticToolInput,
   type RealisticToolSpec,
 } from "@/lib/mock-tools";
+import {
+  executeSchedulerTool,
+  getSchedulerToolSpec,
+  isSchedulerToolName,
+  schedulerToolSpecs,
+} from "@/lib/scheduler/tool-specs";
 import {
   estimateTokensFromChars,
   type RequestTokenEstimate,
@@ -52,9 +57,16 @@ const DEFAULT_SEARCH_LIMIT = 5;
 const MAX_SEARCH_LIMIT = 20;
 const TOKEN_RE = /[A-Za-z0-9]+/g;
 
-const catalog = mockToolSpecs.map(buildCatalogEntry);
+const catalogToolSpecs = [...mockToolSpecs, ...schedulerToolSpecs];
+const catalog = catalogToolSpecs.map(buildCatalogEntry);
 const catalogStats = buildCatalogStats(catalog);
-const catalogSchemaChars = JSON.stringify(mockToolSpecs.map(getMockToolFunctionSchema)).length;
+const catalogSchemaChars = JSON.stringify(catalogToolSpecs.map(getMockToolFunctionSchema)).length;
+
+export const catalogToolCount = catalogToolSpecs.length;
+
+function getCatalogToolSpec(name: string) {
+  return getSchedulerToolSpec(name) ?? getMockToolSpec(name);
+}
 
 export function resolveToolExposureMode(value: string | undefined): ToolSearchMode {
   return value?.trim().toLowerCase() === "all" ? "all" : "search";
@@ -130,7 +142,7 @@ export function createToolSearchTools(trace: ToolSearchTraceEvent[]): ToolSet {
         return result;
       },
     }),
-    [TOOL_CALL_NAME]: tool<DeferredCallInput, ReturnType<typeof callDeferredTool>>({
+    [TOOL_CALL_NAME]: tool<DeferredCallInput, Awaited<ReturnType<typeof callDeferredTool>>>({
       title: "Call deferred tool",
       description:
         "Invoke a hidden tool by exact name with arguments that match the schema returned by tool_describe.",
@@ -150,9 +162,9 @@ export function createToolSearchTools(trace: ToolSearchTraceEvent[]): ToolSet {
         required: ["name", "arguments"],
         additionalProperties: false,
       }),
-      execute(input) {
-        const result = callDeferredTool(input);
-        const spec = getMockToolSpec(result.name);
+      async execute(input) {
+        const result = await callDeferredTool(input);
+        const spec = getCatalogToolSpec(result.name);
 
         trace.push({
           action: spec?.action,
@@ -169,7 +181,7 @@ export function createToolSearchTools(trace: ToolSearchTraceEvent[]): ToolSet {
   };
 }
 
-export function searchMockToolCatalog(query: string, limit = DEFAULT_SEARCH_LIMIT) {
+export function searchToolCatalog(query: string, limit = DEFAULT_SEARCH_LIMIT) {
   return searchCatalog(query, clampLimit(limit)).map((hit) => ({
     action: hit.spec.action,
     description: hit.spec.description,
@@ -195,18 +207,18 @@ export function buildToolSearchMetadata({
   const savedSchemaChars = Math.max(0, baselineSchemaChars - sentSchemaChars);
 
   return {
-    availableToolCount: mockToolCount,
+    availableToolCount: catalogToolCount,
     baselineSchemaTokens: estimateTokensFromChars(baselineSchemaChars),
     callCount: trace.filter((event) => event.kind === "call").length,
     catalogSchemaTokens: estimateTokensFromChars(catalogSchemaChars),
-    deferredToolCount: mode === "search" ? mockToolCount : 0,
+    deferredToolCount: mode === "search" ? catalogToolCount : 0,
     describeCount: trace.filter((event) => event.kind === "describe").length,
     mode,
     requestCount,
     savedSchemaTokens: estimateTokensFromChars(savedSchemaChars),
     searchCount: trace.filter((event) => event.kind === "search").length,
     sentSchemaTokens: sentSchemaChars > 0 ? estimateTokensFromChars(sentSchemaChars) : 0,
-    sentToolCount: mode === "search" ? BRIDGE_TOOL_COUNT : mockToolCount,
+    sentToolCount: mode === "search" ? BRIDGE_TOOL_COUNT : catalogToolCount,
     trace,
   };
 }
@@ -214,7 +226,7 @@ export function buildToolSearchMetadata({
 function runToolSearch(input: SearchInput) {
   const query = String(input.query ?? "").trim();
   const limit = clampLimit(input.limit);
-  const matches = query ? searchMockToolCatalog(query, limit) : [];
+  const matches = query ? searchToolCatalog(query, limit) : [];
 
   return {
     query,
@@ -226,7 +238,7 @@ function runToolSearch(input: SearchInput) {
 
 function describeTool(input: DescribeInput) {
   const name = String(input.name ?? "").trim();
-  const spec = getMockToolSpec(name);
+  const spec = getCatalogToolSpec(name);
 
   if (!spec) {
     return {
@@ -247,26 +259,20 @@ function describeTool(input: DescribeInput) {
   };
 }
 
-function callDeferredTool(input: DeferredCallInput) {
+async function callDeferredTool(input: DeferredCallInput) {
   const name = String(input.name ?? "").trim();
-  const spec = getMockToolSpec(name);
+  const spec = getCatalogToolSpec(name);
 
   if (!spec) {
-    return {
-      found: false,
-      name,
-      error: `No deferred tool named '${name}' was found. Run tool_search before tool_call.`,
-    };
+    return deferredToolNotFound(name);
   }
 
-  const output = executeMockTool(name, toRecord(input.arguments));
+  const output = isSchedulerToolName(name)
+    ? await executeSchedulerTool(name, toRecord(input.arguments))
+    : executeMockTool(name, toRecord(input.arguments));
 
   if (!output) {
-    return {
-      found: false,
-      name,
-      error: `No deferred tool named '${name}' was found. Run tool_search before tool_call.`,
-    };
+    return deferredToolNotFound(name);
   }
 
   return {
@@ -276,6 +282,14 @@ function callDeferredTool(input: DeferredCallInput) {
     service: spec.service,
     action: spec.action,
     title: spec.title,
+  };
+}
+
+function deferredToolNotFound(name: string) {
+  return {
+    found: false,
+    name,
+    error: `No deferred tool named '${name}' was found. Run tool_search before tool_call.`,
   };
 }
 

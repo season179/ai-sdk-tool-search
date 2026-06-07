@@ -91,7 +91,7 @@ This gives the UI and agent a stable source of truth without querying pg-boss in
 Create a small server-only module:
 
 - `lib/scheduler/boss.ts`
-- exports `getBoss()`, `startBoss()`, and `stopBoss()`
+- exports `getBoss()` (starts pg-boss lazily on first call) and `stopBoss()`
 - validates `DATABASE_URL`
 - sets `schema` from `PGBOSS_SCHEMA`
 - attaches `error` and `warning` listeners
@@ -232,9 +232,16 @@ Use `agent-browser` for browser verification:
 4. Add the compact Tasks panel.
 5. Add end-to-end verification with `agent-browser`.
 
-## Open Decisions
+## Decisions (resolved 2026-06-07)
 
-- Whether this repo should use a tiny SQL migration runner, Drizzle, or raw SQL scripts for the new tables.
-- Whether V1 scheduled execution should run arbitrary instructions or only explicit tool calls.
-- Whether recurring tasks should support pause/resume in V1 or only cancel/recreate.
-- Whether worker deployment is local-only for now or should be documented for the target hosting platform immediately.
+- **Migrations:** raw SQL scripts in `db/migrations/` with a tiny runner (`scripts/migrate.ts`, `pnpm db:migrate`) tracking applied files in `schema_migrations`.
+- **V1 execution:** explicit tool calls only, stored as a discriminated `payload jsonb` (`{ "kind": "tool_call", "toolName", "arguments" }`) instead of the `instruction text` column drafted above. The worker dispatches on `payload.kind`, so a future `instruction` kind (agent-loop execution) is a new dispatcher branch, not a migration — deliberately a two-way door.
+- **Pause/resume:** included in V1 for both task types. Pause unschedules (cron) or cancels the pending job (one-off); resume re-schedules or sends a fresh job (one-off resume requires `run_at` still in the future). A `completed` status was also added for one-off tasks that ran.
+- **Deployment:** local-only. Postgres via `docker-compose.yml` (port 5433), worker via `pnpm worker:scheduled-tasks`.
+
+## Implementation Notes (post-build)
+
+- pg-boss v12 uses a named export (`import { PgBoss } from "pg-boss"`), and `createQueue(name, options)` takes options without `name`.
+- The chat system prompt includes the current UTC time per request; without it the model cannot resolve relative times like "in 20 seconds".
+- Reusing one SQL parameter for the uuid `id` and text `schedule_key` columns fails with `42P08 inconsistent types deduced` — the insert passes the id as two parameters.
+- Scheduler tool errors return `{ success: false, error }` to the model instead of throwing, so the agent can recover (observed live: it retried with a later `run_at` after a "runAt must be in the future" rejection).

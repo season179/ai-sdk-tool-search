@@ -23,6 +23,7 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
+import { TasksPanel } from "@/components/tasks-panel";
 import { Button } from "@/components/ui/button";
 import {
   type ChatMessageMetadata,
@@ -142,12 +143,15 @@ export default function ChatPage() {
               <span>{isBusy ? "Responding" : "Ready"}</span>
             </div>
           </div>
-          <TokenUsageMenu
-            latestBreakdown={tokenUsageSummary.latestBreakdown}
-            latestToolSearch={tokenUsageSummary.latestToolSearch}
-            latestUsage={tokenUsageSummary.latestUsage}
-            sessionUsage={tokenUsageSummary.sessionUsage}
-          />
+          <div className="flex shrink-0 items-center gap-2">
+            <TasksPanel />
+            <TokenUsageMenu
+              latestBreakdown={tokenUsageSummary.latestBreakdown}
+              latestToolSearch={tokenUsageSummary.latestToolSearch}
+              latestUsage={tokenUsageSummary.latestUsage}
+              sessionUsage={tokenUsageSummary.sessionUsage}
+            />
+          </div>
         </div>
       </header>
 

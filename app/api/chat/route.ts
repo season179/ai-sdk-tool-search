@@ -2,6 +2,7 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createAgentUIStreamResponse, smoothStream, ToolLoopAgent, type UIMessage } from "ai";
 
 import { mockToolCount, mockTools } from "@/lib/mock-tools";
+import { schedulerTools } from "@/lib/scheduler/tool-specs";
 import {
   type ChatMessageMetadata,
   estimateRequestTokenUsage,
@@ -18,8 +19,12 @@ import {
 
 export const maxDuration = 30;
 
-const SYSTEM_PROMPT =
-  "Be friendly, concise, and helpful. Use tool_search, tool_describe, and tool_call when hidden tools are needed.";
+const SYSTEM_PROMPT = [
+  "Be friendly, concise, and helpful. Use tool_search, tool_describe, and tool_call when hidden tools are needed.",
+  "Scheduled tasks (scheduled_task_* tools) are real and persistent, not mocked.",
+  "Before creating a scheduled task, ask a follow-up question if the requested time is ambiguous (no date, no timezone, or unclear wording). One-off run_at values must be ISO 8601 with a timezone offset; recurring tasks use cron with an IANA timezone (UTC unless the user says otherwise).",
+  "After creating a task, confirm whether it is one-off or recurring, when it runs, and in which timezone.",
+].join(" ");
 
 class MissingEnvironmentVariableError extends Error {
   constructor(readonly variableName: "OPENROUTER_API_KEY" | "OPENROUTER_DEFAULT_MODEL") {
@@ -71,11 +76,14 @@ export async function POST(req: Request) {
     const openrouter = createOpenRouter({ apiKey });
     const toolExposureMode = resolveToolExposureMode(process.env.TOOL_EXPOSURE_MODE);
     const toolSearchTrace: ToolSearchTraceEvent[] = [];
-    const tools = toolExposureMode === "all" ? mockTools : createToolSearchTools(toolSearchTrace);
+    const tools =
+      toolExposureMode === "all"
+        ? { ...mockTools, ...schedulerTools }
+        : createToolSearchTools(toolSearchTrace);
     const requestEstimates: RequestTokenEstimate[] = [];
 
     const agent = new ToolLoopAgent({
-      instructions: SYSTEM_PROMPT,
+      instructions: `${SYSTEM_PROMPT} The current UTC time is ${new Date().toISOString()}.`,
       model: openrouter.chat(model),
       tools,
     });
