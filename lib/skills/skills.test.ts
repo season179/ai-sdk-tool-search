@@ -566,3 +566,251 @@ describe("getSkillResource", () => {
     await expect(getSkillResource("test-skill", "../foo")).rejects.toThrow(SkillsInputError);
   });
 });
+
+// --- listAllSkills tests ---------------------------------------------------
+
+describe("listAllSkills", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("returns all skills ordered by name", async () => {
+    mockQuery.mockResolvedValue({
+      rows: [makeRow({ name: "alpha" }), makeRow({ id: "id2", name: "beta" })],
+    });
+
+    const { listAllSkills } = await import("./skills");
+    const skills = await listAllSkills();
+
+    expect(skills).toHaveLength(2);
+    expect(skills[0].name).toBe("alpha");
+    expect(skills[1].name).toBe("beta");
+  });
+
+  it("returns empty array when no skills exist", async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { listAllSkills } = await import("./skills");
+    const skills = await listAllSkills();
+
+    expect(skills).toEqual([]);
+  });
+
+  it("includes disabled skills", async () => {
+    mockQuery.mockResolvedValue({ rows: [makeRow({ enabled: false })] });
+
+    const { listAllSkills } = await import("./skills");
+    const skills = await listAllSkills();
+
+    expect(skills[0].enabled).toBe(false);
+  });
+});
+
+// --- getSkillById tests ----------------------------------------------------
+
+describe("getSkillById", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("returns a mapped skill when found", async () => {
+    mockQuery.mockResolvedValue({ rows: [makeRow()] });
+
+    const { getSkillById } = await import("./skills");
+    const skill = await getSkillById("test-id");
+
+    expect(skill.id).toBe("test-id");
+    expect(skill.name).toBe("test-skill");
+  });
+
+  it("throws SkillNotFoundError when not found", async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { getSkillById, SkillNotFoundError } = await import("./skills");
+    await expect(getSkillById("nonexistent")).rejects.toThrow(SkillNotFoundError);
+  });
+
+  it("queries by id", async () => {
+    mockQuery.mockResolvedValue({ rows: [makeRow()] });
+
+    const { getSkillById } = await import("./skills");
+    await getSkillById("test-id");
+
+    expect(mockQuery).toHaveBeenCalledWith(expect.any(String), ["test-id"]);
+  });
+});
+
+// --- createSkill tests -----------------------------------------------------
+
+describe("createSkill", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("creates a skill with valid input", async () => {
+    // First call: duplicate check returns empty
+    // Second call: insert returns the row
+    mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [makeRow()] });
+
+    const { createSkill } = await import("./skills");
+    const skill = await createSkill({
+      name: "test-skill",
+      description: "A test skill",
+    });
+
+    expect(skill.name).toBe("test-skill");
+  });
+
+  it("throws SkillsInputError for invalid name", async () => {
+    const { createSkill } = await import("./skills");
+    await expect(createSkill({ name: "INVALID", description: "A test skill" })).rejects.toThrow(
+      SkillsInputError,
+    );
+  });
+
+  it("throws SkillsInputError for missing description", async () => {
+    const { createSkill } = await import("./skills");
+    await expect(createSkill({ name: "valid-name", description: "" })).rejects.toThrow(
+      SkillsInputError,
+    );
+  });
+
+  it("throws SkillDuplicateNameError when name exists", async () => {
+    // Duplicate check returns existing row
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: "existing-id" }] });
+
+    const { createSkill, SkillDuplicateNameError } = await import("./skills");
+    await expect(createSkill({ name: "test-skill", description: "A test skill" })).rejects.toThrow(
+      SkillDuplicateNameError,
+    );
+  });
+
+  it("defaults body to empty string", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [makeRow({ body: "" })] });
+
+    const { createSkill } = await import("./skills");
+    await createSkill({ name: "test-skill", description: "A test skill" });
+
+    const insertCall = mockQuery.mock.calls[1];
+    // body is the 3rd parameter (index 2)
+    expect(insertCall[1][2]).toBe("");
+  });
+
+  it("defaults enabled to true", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [makeRow()] });
+
+    const { createSkill } = await import("./skills");
+    await createSkill({ name: "test-skill", description: "A test skill" });
+
+    const insertCall = mockQuery.mock.calls[1];
+    // enabled is the 8th parameter (index 7)
+    expect(insertCall[1][7]).toBe(true);
+  });
+});
+
+// --- updateSkill tests -----------------------------------------------------
+
+describe("updateSkill", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("updates description", async () => {
+    // Call 1: getSkillById (verify exists)
+    // Call 2: getSkillById (fetch current for validation)
+    // Call 3: update returning
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeRow()] })
+      .mockResolvedValueOnce({ rows: [makeRow()] })
+      .mockResolvedValueOnce({ rows: [makeRow({ description: "Updated" })] });
+
+    const { updateSkill } = await import("./skills");
+    const skill = await updateSkill("test-id", { description: "Updated" });
+
+    expect(skill.description).toBe("Updated");
+  });
+
+  it("throws SkillNotFoundError when skill does not exist", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { updateSkill, SkillNotFoundError } = await import("./skills");
+    await expect(updateSkill("nonexistent", { description: "x" })).rejects.toThrow(
+      SkillNotFoundError,
+    );
+  });
+
+  it("validates new description", async () => {
+    // First getSkillById returns existing skill
+    mockQuery.mockResolvedValueOnce({ rows: [makeRow()] });
+    // Second getSkillById returns same
+    mockQuery.mockResolvedValueOnce({ rows: [makeRow()] });
+
+    const { updateSkill } = await import("./skills");
+    await expect(updateSkill("test-id", { description: "" })).rejects.toThrow(SkillsInputError);
+  });
+
+  it("returns skill unchanged when no fields provided", async () => {
+    // getSkillById calls
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeRow()] })
+      .mockResolvedValueOnce({ rows: [makeRow()] });
+
+    const { updateSkill } = await import("./skills");
+    const skill = await updateSkill("test-id", {});
+
+    expect(skill.id).toBe("test-id");
+    // Should only call getSkillById twice, no update query
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("updates enabled field", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeRow()] })
+      .mockResolvedValueOnce({ rows: [makeRow({ enabled: false })] });
+
+    const { updateSkill } = await import("./skills");
+    const skill = await updateSkill("test-id", { enabled: false });
+
+    expect(skill.enabled).toBe(false);
+  });
+});
+
+// --- deleteSkill tests -----------------------------------------------------
+
+describe("deleteSkill", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("deletes a skill and returns it", async () => {
+    // Call 1: getSkillById
+    // Call 2: delete
+    mockQuery.mockResolvedValueOnce({ rows: [makeRow()] }).mockResolvedValueOnce({ rows: [] });
+
+    const { deleteSkill } = await import("./skills");
+    const skill = await deleteSkill("test-id");
+
+    expect(skill.id).toBe("test-id");
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws SkillNotFoundError when skill does not exist", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { deleteSkill, SkillNotFoundError } = await import("./skills");
+    await expect(deleteSkill("nonexistent")).rejects.toThrow(SkillNotFoundError);
+  });
+
+  it("calls delete with correct id", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [makeRow()] }).mockResolvedValueOnce({ rows: [] });
+
+    const { deleteSkill } = await import("./skills");
+    await deleteSkill("test-id");
+
+    const deleteCall = mockQuery.mock.calls[1];
+    expect(deleteCall[0]).toContain("delete from agent_skills");
+    expect(deleteCall[1]).toEqual(["test-id"]);
+  });
+});
