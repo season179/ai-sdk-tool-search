@@ -814,3 +814,315 @@ describe("deleteSkill", () => {
     expect(deleteCall[1]).toEqual(["test-id"]);
   });
 });
+
+// --- listSkillResourcesBySkillId tests --------------------------------------
+
+describe("listSkillResourcesBySkillId", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("returns mapped resources from the database", async () => {
+    mockQuery.mockResolvedValue({ rows: [makeResourceRow()] });
+
+    const { listSkillResourcesBySkillId } = await import("./skills");
+    const resources = await listSkillResourcesBySkillId("skill-id");
+
+    expect(resources).toHaveLength(1);
+    expect(resources[0]).toEqual({
+      id: "resource-id",
+      skillId: "skill-id",
+      path: "reference.md",
+      contentType: "text/markdown",
+      body: "# Reference\nContent here",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+  });
+
+  it("returns empty array when no resources exist", async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { listSkillResourcesBySkillId } = await import("./skills");
+    const resources = await listSkillResourcesBySkillId("nonexistent");
+
+    expect(resources).toEqual([]);
+  });
+
+  it("queries by skill id ordered by path", async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { listSkillResourcesBySkillId } = await import("./skills");
+    await listSkillResourcesBySkillId("skill-id");
+
+    const sql = mockQuery.mock.calls[0][0] as string;
+    expect(sql).toContain("where skill_id = $1");
+    expect(sql).toContain("order by path");
+    expect(mockQuery).toHaveBeenCalledWith(expect.any(String), ["skill-id"]);
+  });
+});
+
+// --- getSkillResourceById tests ---------------------------------------------
+
+describe("getSkillResourceById", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("returns a mapped resource when found", async () => {
+    mockQuery.mockResolvedValue({ rows: [makeResourceRow()] });
+
+    const { getSkillResourceById } = await import("./skills");
+    const resource = await getSkillResourceById("resource-id");
+
+    expect(resource.id).toBe("resource-id");
+    expect(resource.path).toBe("reference.md");
+    expect(resource.skillId).toBe("skill-id");
+  });
+
+  it("throws SkillResourceNotFoundError when not found", async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { getSkillResourceById, SkillResourceNotFoundError } = await import("./skills");
+    await expect(getSkillResourceById("nonexistent")).rejects.toThrow(SkillResourceNotFoundError);
+  });
+
+  it("queries by id", async () => {
+    mockQuery.mockResolvedValue({ rows: [makeResourceRow()] });
+
+    const { getSkillResourceById } = await import("./skills");
+    await getSkillResourceById("resource-id");
+
+    expect(mockQuery).toHaveBeenCalledWith(expect.any(String), ["resource-id"]);
+  });
+});
+
+// --- createSkillResource tests ----------------------------------------------
+
+// A node-pg error carries a SQLSTATE `code`; helper to fake one.
+function pgError(code: string): Error {
+  return Object.assign(new Error(`pg error ${code}`), { code });
+}
+
+describe("createSkillResource", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("creates a resource with a single atomic insert", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [makeResourceRow()] });
+
+    const { createSkillResource } = await import("./skills");
+    const resource = await createSkillResource({ skillId: "skill-id", path: "reference.md" });
+
+    expect(resource.path).toBe("reference.md");
+    expect(resource.skillId).toBe("skill-id");
+    // No pre-check round trips — just the insert.
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws SkillsInputError for invalid path before touching the db", async () => {
+    const { createSkillResource } = await import("./skills");
+    await expect(createSkillResource({ skillId: "skill-id", path: "../escape" })).rejects.toThrow(
+      SkillsInputError,
+    );
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("throws SkillsInputError for empty path", async () => {
+    const { createSkillResource } = await import("./skills");
+    await expect(createSkillResource({ skillId: "skill-id", path: "" })).rejects.toThrow(
+      SkillsInputError,
+    );
+  });
+
+  it("throws SkillsInputError for a non-string body before touching the db", async () => {
+    const { createSkillResource } = await import("./skills");
+    await expect(
+      // @ts-expect-error — exercising the runtime type guard
+      createSkillResource({ skillId: "skill-id", path: "reference.md", body: 123 }),
+    ).rejects.toThrow(SkillsInputError);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("maps a foreign-key violation (missing skill) to SkillNotFoundError", async () => {
+    mockQuery.mockRejectedValueOnce(pgError("23503"));
+
+    const { createSkillResource, SkillNotFoundError } = await import("./skills");
+    await expect(
+      createSkillResource({ skillId: "nonexistent", path: "reference.md" }),
+    ).rejects.toThrow(SkillNotFoundError);
+  });
+
+  it("maps a unique violation to SkillResourceDuplicatePathError", async () => {
+    mockQuery.mockRejectedValueOnce(pgError("23505"));
+
+    const { createSkillResource, SkillResourceDuplicatePathError } = await import("./skills");
+    await expect(
+      createSkillResource({ skillId: "skill-id", path: "reference.md" }),
+    ).rejects.toThrow(SkillResourceDuplicatePathError);
+  });
+
+  it("rethrows unrelated db errors untouched", async () => {
+    mockQuery.mockRejectedValueOnce(pgError("08006")); // connection failure
+
+    const { createSkillResource } = await import("./skills");
+    await expect(
+      createSkillResource({ skillId: "skill-id", path: "reference.md" }),
+    ).rejects.toMatchObject({ code: "08006" });
+  });
+
+  it("defaults contentType to text/markdown and body to empty string", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [makeResourceRow()] });
+
+    const { createSkillResource } = await import("./skills");
+    await createSkillResource({ skillId: "skill-id", path: "reference.md" });
+
+    const insertCall = mockQuery.mock.calls[0];
+    // params: [skillId, path, contentType, body]
+    expect(insertCall[1][2]).toBe("text/markdown");
+    expect(insertCall[1][3]).toBe("");
+  });
+});
+
+// --- updateSkillResource tests ----------------------------------------------
+
+describe("updateSkillResource", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("updates the body via lookup + update", async () => {
+    // Call 1: getSkillResourceById
+    // Call 2: update returning
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeResourceRow()] })
+      .mockResolvedValueOnce({ rows: [makeResourceRow({ body: "Updated" })] });
+
+    const { updateSkillResource } = await import("./skills");
+    const resource = await updateSkillResource("skill-id", "resource-id", { body: "Updated" });
+
+    expect(resource.body).toBe("Updated");
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws SkillResourceNotFoundError when the resource does not exist", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { updateSkillResource, SkillResourceNotFoundError } = await import("./skills");
+    await expect(updateSkillResource("skill-id", "nonexistent", { body: "x" })).rejects.toThrow(
+      SkillResourceNotFoundError,
+    );
+  });
+
+  it("throws SkillResourceNotFoundError when the resource belongs to another skill", async () => {
+    // Resource exists but its skill_id ('skill-id') does not match the URL's skill id.
+    mockQuery.mockResolvedValueOnce({ rows: [makeResourceRow()] });
+
+    const { updateSkillResource, SkillResourceNotFoundError } = await import("./skills");
+    await expect(updateSkillResource("other-skill", "resource-id", { body: "x" })).rejects.toThrow(
+      SkillResourceNotFoundError,
+    );
+    // Lookup only — never reaches the update.
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws SkillsInputError for an invalid new path", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [makeResourceRow()] });
+
+    const { updateSkillResource } = await import("./skills");
+    await expect(updateSkillResource("skill-id", "resource-id", { path: "/bad" })).rejects.toThrow(
+      SkillsInputError,
+    );
+  });
+
+  it("maps a unique violation on rename to SkillResourceDuplicatePathError", async () => {
+    // Call 1: getSkillResourceById; Call 2: update rejects with a unique violation.
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeResourceRow()] })
+      .mockRejectedValueOnce(pgError("23505"));
+
+    const { updateSkillResource, SkillResourceDuplicatePathError } = await import("./skills");
+    await expect(
+      updateSkillResource("skill-id", "resource-id", { path: "new.md" }),
+    ).rejects.toThrow(SkillResourceDuplicatePathError);
+  });
+
+  it("performs a path rename with no separate pre-check query", async () => {
+    // Lookup + update only — the unique constraint is enforced by the db, not a SELECT.
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeResourceRow()] })
+      .mockResolvedValueOnce({ rows: [makeResourceRow({ path: "new.md" })] });
+
+    const { updateSkillResource } = await import("./skills");
+    await updateSkillResource("skill-id", "resource-id", { path: "new.md" });
+
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the resource unchanged when no fields provided", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [makeResourceRow()] });
+
+    const { updateSkillResource } = await import("./skills");
+    const resource = await updateSkillResource("skill-id", "resource-id", {});
+
+    expect(resource.id).toBe("resource-id");
+    // Only getSkillResourceById runs; no update query.
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --- deleteSkillResource tests ----------------------------------------------
+
+describe("deleteSkillResource", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("deletes a resource and returns it", async () => {
+    // Call 1: getSkillResourceById
+    // Call 2: delete
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeResourceRow()] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const { deleteSkillResource } = await import("./skills");
+    const resource = await deleteSkillResource("skill-id", "resource-id");
+
+    expect(resource.id).toBe("resource-id");
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws SkillResourceNotFoundError when the resource does not exist", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { deleteSkillResource, SkillResourceNotFoundError } = await import("./skills");
+    await expect(deleteSkillResource("skill-id", "nonexistent")).rejects.toThrow(
+      SkillResourceNotFoundError,
+    );
+  });
+
+  it("throws SkillResourceNotFoundError when the resource belongs to another skill", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [makeResourceRow()] });
+
+    const { deleteSkillResource, SkillResourceNotFoundError } = await import("./skills");
+    await expect(deleteSkillResource("other-skill", "resource-id")).rejects.toThrow(
+      SkillResourceNotFoundError,
+    );
+    // Lookup only — never reaches the delete.
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls delete with the correct id", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeResourceRow()] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const { deleteSkillResource } = await import("./skills");
+    await deleteSkillResource("skill-id", "resource-id");
+
+    const deleteCall = mockQuery.mock.calls[1];
+    expect(deleteCall[0]).toContain("delete from agent_skill_resources");
+    expect(deleteCall[1]).toEqual(["resource-id"]);
+  });
+});
