@@ -9,3 +9,8 @@ out
 *.log
 *.tsbuildinfo
 .DS_Store
+
+# Case harness markers
+.case/
+
+next-env.d.ts

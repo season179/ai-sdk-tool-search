@@ -361,3 +361,208 @@ describe("getSkillByName", () => {
     expect(skill?.enabled).toBe(false);
   });
 });
+
+// --- Resource row helper ----------------------------------------------------
+
+function makeResourceRow(overrides: Record<string, unknown> = {}): SkillResourceRow {
+  return {
+    id: "resource-id",
+    skill_id: "skill-id",
+    path: "reference.md",
+    content_type: "text/markdown",
+    body: "# Reference\nContent here",
+    created_at: new Date("2026-01-01T00:00:00Z"),
+    updated_at: new Date("2026-01-01T00:00:00Z"),
+    ...overrides,
+  };
+}
+
+type SkillResourceRow = {
+  id: string;
+  skill_id: string;
+  path: string;
+  content_type: string;
+  body: string;
+  created_at: Date;
+  updated_at: Date;
+};
+
+// --- validateResourcePath tests ---------------------------------------------
+
+describe("validateResourcePath", () => {
+  it("accepts a valid relative path", async () => {
+    const { validateResourcePath } = await import("./skills");
+    expect(() => validateResourcePath("reference.md")).not.toThrow();
+  });
+
+  it("accepts a nested path", async () => {
+    const { validateResourcePath } = await import("./skills");
+    expect(() => validateResourcePath("docs/reference.md")).not.toThrow();
+  });
+
+  it("rejects an empty string", async () => {
+    const { validateResourcePath } = await import("./skills");
+    expect(() => validateResourcePath("")).toThrow(SkillsInputError);
+  });
+
+  it("rejects a leading slash", async () => {
+    const { validateResourcePath } = await import("./skills");
+    expect(() => validateResourcePath("/reference.md")).toThrow(SkillsInputError);
+  });
+
+  it("rejects '..' segments", async () => {
+    const { validateResourcePath } = await import("./skills");
+    expect(() => validateResourcePath("../etc/passwd")).toThrow(SkillsInputError);
+  });
+
+  it("rejects '..' in the middle of path", async () => {
+    const { validateResourcePath } = await import("./skills");
+    expect(() => validateResourcePath("foo/../bar")).toThrow(SkillsInputError);
+  });
+
+  it("includes descriptive message for empty path", async () => {
+    const { validateResourcePath } = await import("./skills");
+    try {
+      validateResourcePath("");
+    } catch (e) {
+      expect(e).toBeInstanceOf(SkillsInputError);
+      expect((e as SkillsInputError).message).toContain("non-empty");
+      return;
+    }
+    expect.unreachable("Should have thrown");
+  });
+
+  it("includes descriptive message for leading slash", async () => {
+    const { validateResourcePath } = await import("./skills");
+    try {
+      validateResourcePath("/foo");
+    } catch (e) {
+      expect(e).toBeInstanceOf(SkillsInputError);
+      expect((e as SkillsInputError).message).toContain("/");
+      return;
+    }
+    expect.unreachable("Should have thrown");
+  });
+
+  it("includes descriptive message for '..' segments", async () => {
+    const { validateResourcePath } = await import("./skills");
+    try {
+      validateResourcePath("../foo");
+    } catch (e) {
+      expect(e).toBeInstanceOf(SkillsInputError);
+      expect((e as SkillsInputError).message).toContain("..");
+      return;
+    }
+    expect.unreachable("Should have thrown");
+  });
+});
+
+// --- listSkillResources tests -----------------------------------------------
+
+describe("listSkillResources", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("returns mapped resources from the database", async () => {
+    mockQuery.mockResolvedValue({ rows: [makeResourceRow()] });
+
+    const { listSkillResources } = await import("./skills");
+    const resources = await listSkillResources("test-skill");
+
+    expect(resources).toHaveLength(1);
+    expect(resources[0]).toEqual({
+      id: "resource-id",
+      skillId: "skill-id",
+      path: "reference.md",
+      contentType: "text/markdown",
+      body: "# Reference\nContent here",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+  });
+
+  it("returns empty array when no resources exist", async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { listSkillResources } = await import("./skills");
+    const resources = await listSkillResources("nonexistent");
+
+    expect(resources).toEqual([]);
+  });
+
+  it("joins on skill name", async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { listSkillResources } = await import("./skills");
+    await listSkillResources("my-skill");
+
+    const sql = mockQuery.mock.calls[0][0] as string;
+    expect(sql).toContain("join agent_skills");
+    expect(sql).toContain("s.name");
+    expect(mockQuery).toHaveBeenCalledWith(expect.any(String), ["my-skill"]);
+  });
+
+  it("returns resources ordered by path", async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { listSkillResources } = await import("./skills");
+    await listSkillResources("test-skill");
+
+    const sql = mockQuery.mock.calls[0][0] as string;
+    expect(sql).toContain("order by r.path");
+  });
+});
+
+// --- getSkillResource tests -------------------------------------------------
+
+describe("getSkillResource", () => {
+  afterEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("returns a mapped resource when found", async () => {
+    mockQuery.mockResolvedValue({ rows: [makeResourceRow()] });
+
+    const { getSkillResource } = await import("./skills");
+    const resource = await getSkillResource("test-skill", "reference.md");
+
+    expect(resource).not.toBeNull();
+    expect(resource?.path).toBe("reference.md");
+    expect(resource?.skillId).toBe("skill-id");
+    expect(resource?.body).toBe("# Reference\nContent here");
+  });
+
+  it("returns null when no resource matches", async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { getSkillResource } = await import("./skills");
+    const resource = await getSkillResource("test-skill", "nonexistent.md");
+
+    expect(resource).toBeNull();
+  });
+
+  it("passes skill name and path as query parameters", async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { getSkillResource } = await import("./skills");
+    await getSkillResource("my-skill", "reference.md");
+
+    expect(mockQuery).toHaveBeenCalledWith(expect.any(String), ["my-skill", "reference.md"]);
+  });
+
+  it("throws SkillsInputError for invalid path", async () => {
+    const { getSkillResource } = await import("./skills");
+    await expect(getSkillResource("test-skill", "")).rejects.toThrow(SkillsInputError);
+  });
+
+  it("throws SkillsInputError for path with leading slash", async () => {
+    const { getSkillResource } = await import("./skills");
+    await expect(getSkillResource("test-skill", "/foo")).rejects.toThrow(SkillsInputError);
+  });
+
+  it("throws SkillsInputError for path with '..' segment", async () => {
+    const { getSkillResource } = await import("./skills");
+    await expect(getSkillResource("test-skill", "../foo")).rejects.toThrow(SkillsInputError);
+  });
+});
