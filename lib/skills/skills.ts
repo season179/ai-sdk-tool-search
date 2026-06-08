@@ -40,6 +40,20 @@ export class SkillDuplicateNameError extends Error {
   }
 }
 
+export class SkillResourceNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Skill resource not found: ${id}`);
+    this.name = "SkillResourceNotFoundError";
+  }
+}
+
+export class SkillResourceDuplicatePathError extends Error {
+  constructor(path: string) {
+    super(`A resource with path '${path}' already exists for this skill.`);
+    this.name = "SkillResourceDuplicatePathError";
+  }
+}
+
 // --- Row type ---------------------------------------------------------------
 
 type SkillRow = {
@@ -161,6 +175,16 @@ export function validateResourcePath(path: string): void {
   }
 }
 
+export function validateResourceContent(input: { contentType?: unknown; body?: unknown }): void {
+  if (input.contentType !== undefined && typeof input.contentType !== "string") {
+    throw new SkillsInputError("Resource contentType must be a string.");
+  }
+
+  if (input.body !== undefined && typeof input.body !== "string") {
+    throw new SkillsInputError("Resource body must be a string.");
+  }
+}
+
 export async function listSkillResources(skillName: string): Promise<SkillResource[]> {
   const { rows } = await getPool().query<SkillResourceRow>(
     `select r.id, r.skill_id, r.path, r.content_type, r.body, r.created_at, r.updated_at
@@ -200,6 +224,145 @@ export async function getSkillResource(
   );
 
   return rows[0] ? mapSkillResourceRow(rows[0]) : null;
+}
+
+// Column list shared by every single-table resource query (keeps mapSkillResourceRow in sync).
+const RESOURCE_COLUMNS = "id, skill_id, path, content_type, body, created_at, updated_at";
+
+export async function listSkillResourcesBySkillId(skillId: string): Promise<SkillResource[]> {
+  const { rows } = await getPool().query<SkillResourceRow>(
+    `select ${RESOURCE_COLUMNS}
+     from agent_skill_resources
+     where skill_id = $1
+     order by path`,
+    [skillId],
+  );
+
+  return rows.map(mapSkillResourceRow);
+}
+
+export async function getSkillResourceById(resourceId: string): Promise<SkillResource> {
+  const { rows } = await getPool().query<SkillResourceRow>(
+    `select ${RESOURCE_COLUMNS}
+     from agent_skill_resources
+     where id = $1`,
+    [resourceId],
+  );
+
+  if (rows.length === 0) {
+    throw new SkillResourceNotFoundError(resourceId);
+  }
+
+  return mapSkillResourceRow(rows[0]);
+}
+
+export async function createSkillResource(input: {
+  skillId: string;
+  path: string;
+  contentType?: string;
+  body?: string;
+}): Promise<SkillResource> {
+  validateResourcePath(input.path);
+  validateResourceContent(input);
+
+  // The schema enforces the FK to agent_skills and the unique (skill_id, path)
+  // constraint, so a single INSERT is atomic — no TOCTOU pre-check needed. Map the
+  // two reachable violations to friendly errors instead of leaking a raw PG error.
+  try {
+    const { rows } = await getPool().query<SkillResourceRow>(
+      `insert into agent_skill_resources (skill_id, path, content_type, body)
+       values ($1, $2, $3, $4)
+       returning ${RESOURCE_COLUMNS}`,
+      [input.skillId, input.path, input.contentType ?? "text/markdown", input.body ?? ""],
+    );
+
+    return mapSkillResourceRow(rows[0]);
+  } catch (error) {
+    if (isPgError(error, "23505")) {
+      throw new SkillResourceDuplicatePathError(input.path);
+    }
+    if (isPgError(error, "23503")) {
+      throw new SkillNotFoundError(input.skillId);
+    }
+    throw error;
+  }
+}
+
+export async function updateSkillResource(
+  skillId: string,
+  resourceId: string,
+  input: {
+    path?: string;
+    contentType?: string;
+    body?: string;
+  },
+): Promise<SkillResource> {
+  const current = await getSkillResourceById(resourceId);
+
+  // The resource must belong to the skill named in the URL; otherwise it is "not found"
+  // for this skill — never silently mutate another skill's resource.
+  if (current.skillId !== skillId) {
+    throw new SkillResourceNotFoundError(resourceId);
+  }
+
+  if (input.path !== undefined) {
+    validateResourcePath(input.path);
+  }
+  validateResourceContent(input);
+
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  let idx = 1;
+
+  if (input.path !== undefined) {
+    sets.push(`path = $${idx++}`);
+    values.push(input.path);
+  }
+  if (input.contentType !== undefined) {
+    sets.push(`content_type = $${idx++}`);
+    values.push(input.contentType);
+  }
+  if (input.body !== undefined) {
+    sets.push(`body = $${idx++}`);
+    values.push(input.body);
+  }
+
+  if (sets.length === 0) {
+    return current;
+  }
+
+  sets.push(`updated_at = now()`);
+  values.push(resourceId);
+
+  try {
+    const { rows } = await getPool().query<SkillResourceRow>(
+      `update agent_skill_resources set ${sets.join(", ")} where id = $${idx}
+       returning ${RESOURCE_COLUMNS}`,
+      values,
+    );
+
+    return mapSkillResourceRow(rows[0]);
+  } catch (error) {
+    if (isPgError(error, "23505")) {
+      throw new SkillResourceDuplicatePathError(input.path ?? current.path);
+    }
+    throw error;
+  }
+}
+
+export async function deleteSkillResource(
+  skillId: string,
+  resourceId: string,
+): Promise<SkillResource> {
+  const resource = await getSkillResourceById(resourceId);
+
+  if (resource.skillId !== skillId) {
+    throw new SkillResourceNotFoundError(resourceId);
+  }
+
+  await getPool().query(`delete from agent_skill_resources where id = $1`, [resourceId]);
+
+  return resource;
 }
 
 export async function listAllSkills(): Promise<Skill[]> {
@@ -389,4 +552,18 @@ function mapSkillResourceRow(row: SkillResourceRow): SkillResource {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * True when `error` is a node-pg error carrying the given SQLSTATE code.
+ * Common codes: 23505 unique_violation, 23503 foreign_key_violation,
+ * 22P02 invalid_text_representation (e.g. a malformed uuid).
+ */
+export function isPgError(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
 }
