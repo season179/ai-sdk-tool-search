@@ -3,6 +3,8 @@ import { createAgentUIStreamResponse, smoothStream, ToolLoopAgent, type UIMessag
 
 import { mockToolCount, mockTools } from "@/lib/mock-tools";
 import { schedulerTools } from "@/lib/scheduler/tool-specs";
+import { listEnabledSkills } from "@/lib/skills/skills";
+import { createSkillTools, type SkillReadTraceEvent } from "@/lib/skills/tools";
 import {
   type ChatMessageMetadata,
   estimateRequestTokenUsage,
@@ -76,14 +78,31 @@ export async function POST(req: Request) {
     const openrouter = createOpenRouter({ apiKey });
     const toolExposureMode = resolveToolExposureMode(process.env.TOOL_EXPOSURE_MODE);
     const toolSearchTrace: ToolSearchTraceEvent[] = [];
+    const skillTrace: SkillReadTraceEvent[] = [];
+
+    // Load enabled skills (graceful fallback when DB is absent)
+    let enabledSkills: Awaited<ReturnType<typeof listEnabledSkills>> = [];
+    try {
+      enabledSkills = await listEnabledSkills();
+    } catch {
+      // DB unavailable — continue with zero skills
+    }
+
+    const skillTools = createSkillTools(skillTrace);
     const tools =
       toolExposureMode === "all"
-        ? { ...mockTools, ...schedulerTools }
-        : createToolSearchTools(toolSearchTrace);
+        ? { ...mockTools, ...schedulerTools, ...skillTools }
+        : { ...createToolSearchTools(toolSearchTrace), ...skillTools };
     const requestEstimates: RequestTokenEstimate[] = [];
 
+    // Build skill metadata for system prompt injection
+    const skillInstructions =
+      enabledSkills.length > 0
+        ? `\n\nAvailable skills (use skill_read to load a skill's full instructions or resources): ${enabledSkills.map((s) => `${s.name}: ${s.description}`).join("; ")}.`
+        : "";
+
     const agent = new ToolLoopAgent({
-      instructions: `${SYSTEM_PROMPT} The current UTC time is ${new Date().toISOString()}.`,
+      instructions: `${SYSTEM_PROMPT} The current UTC time is ${new Date().toISOString()}.${skillInstructions}`,
       model: openrouter.chat(model),
       tools,
     });
@@ -106,6 +125,7 @@ export async function POST(req: Request) {
       },
       headers: {
         "x-mock-tools": String(mockToolCount),
+        "x-skill-count": String(enabledSkills.length),
         "x-total-tools": String(Object.keys(tools).length),
         "x-openrouter-model": model,
         "x-tool-exposure-mode": toolExposureMode,
