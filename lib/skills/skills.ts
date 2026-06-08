@@ -15,6 +15,11 @@ export type Skill = {
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Number of attached skill resources. Only populated by list queries that
+   * join the resources table (e.g. `listAllSkills`); `undefined` otherwise.
+   */
+  resourceCount?: number;
 };
 
 // --- Error classes ----------------------------------------------------------
@@ -69,6 +74,7 @@ type SkillRow = {
   enabled: boolean;
   created_at: Date;
   updated_at: Date;
+  resource_count?: string | number | null;
 };
 
 // --- Domain types (resources) ----------------------------------------------
@@ -367,10 +373,13 @@ export async function deleteSkillResource(
 
 export async function listAllSkills(): Promise<Skill[]> {
   const { rows } = await getPool().query<SkillRow>(
-    `select id, name, description, body, license, compatibility, allowed_tools, metadata,
-            version, enabled, created_at, updated_at
-     from agent_skills
-     order by name`,
+    `select s.id, s.name, s.description, s.body, s.license, s.compatibility, s.allowed_tools,
+            s.metadata, s.version, s.enabled, s.created_at, s.updated_at,
+            count(r.id) as resource_count
+     from agent_skills s
+     left join agent_skill_resources r on r.skill_id = s.id
+     group by s.id
+     order by s.name`,
   );
 
   return rows.map(mapSkillRow);
@@ -535,6 +544,7 @@ function mapSkillRow(row: SkillRow): Skill {
     enabled: row.enabled,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
+    ...(row.resource_count == null ? {} : { resourceCount: Number(row.resource_count) }),
   };
 }
 
