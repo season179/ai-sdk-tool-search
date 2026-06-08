@@ -276,7 +276,22 @@ export function buildSkillsMetadata({
   // Resource reads: skill_read events with a path
   const resourceReads = skillTrace.filter((event) => event.found && event.path);
   const resourceReadCount = resourceReads.length;
-  const activatedResourceTokens = estimateTokensFromChars(activatedResourceChars ?? 0);
+  // Estimate activated resource chars from unique resources read (deduped by name+path).
+  // Prefer an explicit override; otherwise sum the char counts captured at read time.
+  const uniqueResourceChars = new Map<string, number>();
+  for (const event of resourceReads) {
+    const key = `${event.name} ${event.path}`;
+    if (!uniqueResourceChars.has(key)) {
+      uniqueResourceChars.set(key, event.chars ?? 0);
+    }
+  }
+  const derivedActivatedResourceChars = [...uniqueResourceChars.values()].reduce(
+    (sum, chars) => sum + chars,
+    0,
+  );
+  const activatedResourceTokens = estimateTokensFromChars(
+    activatedResourceChars ?? derivedActivatedResourceChars,
+  );
   const allResourcesTokens = estimateTokensFromChars(allResourcesChars ?? 0);
   const savedResourceTokens = Math.max(0, allResourcesTokens - activatedResourceTokens);
 

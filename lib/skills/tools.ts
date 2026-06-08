@@ -46,6 +46,7 @@ export function createSkillTools(trace: SkillReadTraceEvent[]): ToolSet {
           name: result.name,
           path: input.path ?? undefined,
           found: result.found,
+          chars: "body" in result && typeof result.body === "string" ? result.body.length : 0,
         });
 
         return result;

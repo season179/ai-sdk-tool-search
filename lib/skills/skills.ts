@@ -174,6 +174,17 @@ export async function listSkillResources(skillName: string): Promise<SkillResour
   return rows.map(mapSkillResourceRow);
 }
 
+export async function getEnabledSkillsResourceChars(): Promise<number> {
+  const { rows } = await getPool().query<{ total: string | null }>(
+    `select coalesce(sum(length(r.body)), 0) as total
+     from agent_skill_resources r
+     join agent_skills s on s.id = r.skill_id
+     where s.enabled = true`,
+  );
+
+  return Number(rows[0]?.total ?? 0);
+}
+
 export async function getSkillResource(
   skillName: string,
   path: string,

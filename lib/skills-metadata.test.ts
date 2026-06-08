@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-
-import { getSkillsMetadata, type SkillReadTraceEvent, type SkillsMetadata } from "./token-usage";
+import type { SkillReadTraceEvent, SkillsMetadata } from "./token-usage";
+import { getSkillsMetadata } from "./token-usage-getters";
 
 // --- buildSkillsMetadata tests (imported from tool-search) -----------------
 
@@ -149,9 +149,59 @@ describe("buildSkillsMetadata", () => {
 
     expect(result.allResourcesTokens).toBe(Math.max(1, Math.round(400 / 4)));
     expect(result.resourceReadCount).toBe(1);
-    // activatedResourceTokens is 0 since we don't have actual resource body chars
+    // activatedResourceTokens is 0 since the trace carries no resource char counts
     expect(result.activatedResourceTokens).toBe(0);
     expect(result.savedResourceTokens).toBe(result.allResourcesTokens);
+  });
+
+  it("derives activated resource tokens from trace char counts", async () => {
+    const { buildSkillsMetadata } = await import("./tool-search");
+
+    const result = buildSkillsMetadata({
+      enabledSkills: [{ name: "a", description: "d", body: "body" }],
+      skillTrace: [
+        { kind: "skill_read", name: "a", path: "ref.md", found: true, chars: 120 },
+        { kind: "skill_read", name: "a", path: "guide.md", found: true, chars: 80 },
+      ],
+      allResourcesChars: 400,
+    });
+
+    // activated = 120 + 80 = 200 chars
+    expect(result.resourceReadCount).toBe(2);
+    expect(result.activatedResourceTokens).toBe(Math.max(1, Math.round(200 / 4)));
+    expect(result.savedResourceTokens).toBe(
+      result.allResourcesTokens - result.activatedResourceTokens,
+    );
+  });
+
+  it("dedupes repeated resource reads by name + path", async () => {
+    const { buildSkillsMetadata } = await import("./tool-search");
+
+    const result = buildSkillsMetadata({
+      enabledSkills: [{ name: "a", description: "d", body: "body" }],
+      skillTrace: [
+        { kind: "skill_read", name: "a", path: "ref.md", found: true, chars: 100 },
+        { kind: "skill_read", name: "a", path: "ref.md", found: true, chars: 100 },
+      ],
+      allResourcesChars: 400,
+    });
+
+    // Both reads target the same resource; counted once toward activated chars.
+    expect(result.resourceReadCount).toBe(2);
+    expect(result.activatedResourceTokens).toBe(Math.max(1, Math.round(100 / 4)));
+  });
+
+  it("prefers explicit activatedResourceChars over trace-derived chars", async () => {
+    const { buildSkillsMetadata } = await import("./tool-search");
+
+    const result = buildSkillsMetadata({
+      enabledSkills: [{ name: "a", description: "d", body: "body" }],
+      skillTrace: [{ kind: "skill_read", name: "a", path: "ref.md", found: true, chars: 100 }],
+      allResourcesChars: 400,
+      activatedResourceChars: 40,
+    });
+
+    expect(result.activatedResourceTokens).toBe(Math.max(1, Math.round(40 / 4)));
   });
 });
 

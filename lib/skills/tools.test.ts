@@ -160,6 +160,7 @@ describe("createSkillTools", () => {
       name: "test-skill",
       path: undefined,
       found: true,
+      chars: "# Test Skill\nInstructions here".length,
     });
   });
 
@@ -179,6 +180,7 @@ describe("createSkillTools", () => {
       name: "test-skill",
       path: "reference.md",
       found: true,
+      chars: "# Reference\nContent here".length,
     });
   });
 
@@ -196,6 +198,7 @@ describe("createSkillTools", () => {
       name: "missing-skill",
       path: undefined,
       found: false,
+      chars: 0,
     });
   });
 

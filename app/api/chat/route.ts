@@ -3,7 +3,7 @@ import { createAgentUIStreamResponse, smoothStream, ToolLoopAgent, type UIMessag
 
 import { mockToolCount, mockTools } from "@/lib/mock-tools";
 import { schedulerTools } from "@/lib/scheduler/tool-specs";
-import { listEnabledSkills, listSkillResources } from "@/lib/skills/skills";
+import { getEnabledSkillsResourceChars, listEnabledSkills } from "@/lib/skills/skills";
 import { createSkillTools } from "@/lib/skills/tools";
 import {
   type ChatMessageMetadata,
@@ -97,13 +97,10 @@ export async function POST(req: Request) {
         : { ...createToolSearchTools(toolSearchTrace), ...skillTools };
     const requestEstimates: RequestTokenEstimate[] = [];
 
-    // Compute all-resources baseline before the agent loop
+    // Compute all-resources baseline before the agent loop (single aggregate query)
     let allResourcesChars = 0;
     try {
-      for (const skill of enabledSkills) {
-        const resources = await listSkillResources(skill.name);
-        allResourcesChars += resources.reduce((sum, r) => sum + r.body.length, 0);
-      }
+      allResourcesChars = await getEnabledSkillsResourceChars();
     } catch {
       // DB unavailable — baseline stays 0
     }
