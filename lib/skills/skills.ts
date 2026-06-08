@@ -43,6 +43,30 @@ type SkillRow = {
   updated_at: Date;
 };
 
+// --- Domain types (resources) ----------------------------------------------
+
+export type SkillResource = {
+  id: string;
+  skillId: string;
+  path: string;
+  contentType: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// --- Row type (resources) ---------------------------------------------------
+
+type SkillResourceRow = {
+  id: string;
+  skill_id: string;
+  path: string;
+  content_type: string;
+  body: string;
+  created_at: Date;
+  updated_at: Date;
+};
+
 // --- Public API -------------------------------------------------------------
 
 export async function listEnabledSkills(): Promise<Skill[]> {
@@ -109,6 +133,50 @@ export function validateSkillInput(input: {
   }
 }
 
+export function validateResourcePath(path: string): void {
+  if (!path || path.length === 0) {
+    throw new SkillsInputError("Resource path must be a non-empty string.");
+  }
+
+  if (path.startsWith("/")) {
+    throw new SkillsInputError("Resource path must not start with '/'.");
+  }
+
+  if (path.includes("..")) {
+    throw new SkillsInputError("Resource path must not contain '..' segments.");
+  }
+}
+
+export async function listSkillResources(skillName: string): Promise<SkillResource[]> {
+  const { rows } = await getPool().query<SkillResourceRow>(
+    `select r.id, r.skill_id, r.path, r.content_type, r.body, r.created_at, r.updated_at
+     from agent_skill_resources r
+     join agent_skills s on s.id = r.skill_id
+     where s.name = $1
+     order by r.path`,
+    [skillName],
+  );
+
+  return rows.map(mapSkillResourceRow);
+}
+
+export async function getSkillResource(
+  skillName: string,
+  path: string,
+): Promise<SkillResource | null> {
+  validateResourcePath(path);
+
+  const { rows } = await getPool().query<SkillResourceRow>(
+    `select r.id, r.skill_id, r.path, r.content_type, r.body, r.created_at, r.updated_at
+     from agent_skill_resources r
+     join agent_skills s on s.id = r.skill_id
+     where s.name = $1 and r.path = $2`,
+    [skillName, path],
+  );
+
+  return rows[0] ? mapSkillResourceRow(rows[0]) : null;
+}
+
 // --- Internals --------------------------------------------------------------
 
 function mapSkillRow(row: SkillRow): Skill {
@@ -123,6 +191,18 @@ function mapSkillRow(row: SkillRow): Skill {
     metadata: isRecord(row.metadata) ? (row.metadata as Record<string, unknown>) : null,
     version: row.version,
     enabled: row.enabled,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function mapSkillResourceRow(row: SkillResourceRow): SkillResource {
+  return {
+    id: row.id,
+    skillId: row.skill_id,
+    path: row.path,
+    contentType: row.content_type,
+    body: row.body,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
