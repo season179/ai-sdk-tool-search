@@ -1,15 +1,11 @@
 import { jsonSchema, type ToolSet, tool } from "ai";
 
 import { getSkillByName, getSkillResource } from "@/lib/skills/skills";
+import type { SkillReadTraceEvent } from "@/lib/token-usage";
 
-// --- Trace types ------------------------------------------------------------
+// --- Re-export for convenience ---------------------------------------------
 
-export type SkillReadTraceEvent = {
-  kind: "skill_read";
-  name: string;
-  path?: string;
-  found: boolean;
-};
+export type { SkillReadTraceEvent };
 
 // --- Tool input types -------------------------------------------------------
 

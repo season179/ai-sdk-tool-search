@@ -101,10 +101,32 @@ export type ToolSearchMetadata = {
   trace: ToolSearchTraceEvent[];
 };
 
+export type SkillsMetadata = {
+  enabledSkillCount: number;
+  metadataTokens: number;
+  bodyReadCount: number;
+  activatedBodyTokens: number;
+  allBodiesTokens: number;
+  savedBodyTokens: number;
+  resourceReadCount: number;
+  activatedResourceTokens: number;
+  allResourcesTokens: number;
+  savedResourceTokens: number;
+  trace: SkillReadTraceEvent[];
+};
+
+export type SkillReadTraceEvent = {
+  kind: "skill_read";
+  name: string;
+  path?: string;
+  found: boolean;
+};
+
 export type ChatMessageMetadata = {
   tokenUsage?: TokenUsage;
   tokenUsageBreakdown?: TokenUsageBreakdown;
   toolSearch?: ToolSearchMetadata;
+  skills?: SkillsMetadata;
 };
 
 export function toTokenUsage(usage: LanguageModelUsage): TokenUsage {
@@ -215,6 +237,55 @@ export function getToolSearchMetadata(metadata: unknown): ToolSearchMetadata | u
     callCount,
     trace: Array.isArray(toolSearch.trace)
       ? toolSearch.trace.map(readToolSearchTraceEvent).filter(isDefined)
+      : [],
+  };
+}
+
+export function getSkillsMetadata(metadata: unknown): SkillsMetadata | undefined {
+  if (!isRecord(metadata) || !isRecord(metadata.skills)) {
+    return undefined;
+  }
+
+  const skills = metadata.skills;
+  const enabledSkillCount = readPositiveInteger(skills.enabledSkillCount);
+  const metadataTokens = readPositiveInteger(skills.metadataTokens);
+  const bodyReadCount = readPositiveInteger(skills.bodyReadCount);
+  const activatedBodyTokens = readPositiveInteger(skills.activatedBodyTokens);
+  const allBodiesTokens = readPositiveInteger(skills.allBodiesTokens);
+  const savedBodyTokens = readPositiveInteger(skills.savedBodyTokens);
+  const resourceReadCount = readPositiveInteger(skills.resourceReadCount);
+  const activatedResourceTokens = readPositiveInteger(skills.activatedResourceTokens);
+  const allResourcesTokens = readPositiveInteger(skills.allResourcesTokens);
+  const savedResourceTokens = readPositiveInteger(skills.savedResourceTokens);
+
+  if (
+    enabledSkillCount == null ||
+    metadataTokens == null ||
+    bodyReadCount == null ||
+    activatedBodyTokens == null ||
+    allBodiesTokens == null ||
+    savedBodyTokens == null ||
+    resourceReadCount == null ||
+    activatedResourceTokens == null ||
+    allResourcesTokens == null ||
+    savedResourceTokens == null
+  ) {
+    return undefined;
+  }
+
+  return {
+    enabledSkillCount,
+    metadataTokens,
+    bodyReadCount,
+    activatedBodyTokens,
+    allBodiesTokens,
+    savedBodyTokens,
+    resourceReadCount,
+    activatedResourceTokens,
+    allResourcesTokens,
+    savedResourceTokens,
+    trace: Array.isArray(skills.trace)
+      ? skills.trace.map(readSkillReadTraceEvent).filter(isDefined)
       : [],
   };
 }
@@ -704,6 +775,25 @@ function readToolSearchMatch(value: unknown): ToolSearchMatch | undefined {
   }
 
   return { name, score, service, title };
+}
+
+function readSkillReadTraceEvent(value: unknown): SkillReadTraceEvent | undefined {
+  if (!isRecord(value) || value.kind !== "skill_read") {
+    return undefined;
+  }
+
+  const name = typeof value.name === "string" ? value.name : "";
+
+  if (!name || typeof value.found !== "boolean") {
+    return undefined;
+  }
+
+  return {
+    kind: "skill_read",
+    name,
+    path: typeof value.path === "string" ? value.path : undefined,
+    found: value.found,
+  };
 }
 
 function readPositiveInteger(value: unknown): number | undefined {

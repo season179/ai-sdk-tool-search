@@ -3,17 +3,19 @@ import { createAgentUIStreamResponse, smoothStream, ToolLoopAgent, type UIMessag
 
 import { mockToolCount, mockTools } from "@/lib/mock-tools";
 import { schedulerTools } from "@/lib/scheduler/tool-specs";
-import { listEnabledSkills } from "@/lib/skills/skills";
-import { createSkillTools, type SkillReadTraceEvent } from "@/lib/skills/tools";
+import { listEnabledSkills, listSkillResources } from "@/lib/skills/skills";
+import { createSkillTools } from "@/lib/skills/tools";
 import {
   type ChatMessageMetadata,
   estimateRequestTokenUsage,
   type RequestTokenEstimate,
+  type SkillReadTraceEvent,
   type ToolSearchTraceEvent,
   toTokenUsage,
   toTokenUsageBreakdown,
 } from "@/lib/token-usage";
 import {
+  buildSkillsMetadata,
   buildToolSearchMetadata,
   createToolSearchTools,
   resolveToolExposureMode,
@@ -95,6 +97,17 @@ export async function POST(req: Request) {
         : { ...createToolSearchTools(toolSearchTrace), ...skillTools };
     const requestEstimates: RequestTokenEstimate[] = [];
 
+    // Compute all-resources baseline before the agent loop
+    let allResourcesChars = 0;
+    try {
+      for (const skill of enabledSkills) {
+        const resources = await listSkillResources(skill.name);
+        allResourcesChars += resources.reduce((sum, r) => sum + r.body.length, 0);
+      }
+    } catch {
+      // DB unavailable — baseline stays 0
+    }
+
     // Build skill metadata for system prompt injection
     const skillInstructions =
       enabledSkills.length > 0
@@ -142,6 +155,11 @@ export async function POST(req: Request) {
             mode: toolExposureMode,
             requestEstimates,
             trace: toolSearchTrace,
+          }),
+          skills: buildSkillsMetadata({
+            enabledSkills,
+            skillTrace,
+            allResourcesChars,
           }),
         };
       },
