@@ -26,6 +26,20 @@ export class SkillsInputError extends Error {
   }
 }
 
+export class SkillNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Skill not found: ${id}`);
+    this.name = "SkillNotFoundError";
+  }
+}
+
+export class SkillDuplicateNameError extends Error {
+  constructor(name: string) {
+    super(`A skill with name '${name}' already exists.`);
+    this.name = "SkillDuplicateNameError";
+  }
+}
+
 // --- Row type ---------------------------------------------------------------
 
 type SkillRow = {
@@ -175,6 +189,160 @@ export async function getSkillResource(
   );
 
   return rows[0] ? mapSkillResourceRow(rows[0]) : null;
+}
+
+export async function listAllSkills(): Promise<Skill[]> {
+  const { rows } = await getPool().query<SkillRow>(
+    `select id, name, description, body, license, compatibility, allowed_tools, metadata,
+            version, enabled, created_at, updated_at
+     from agent_skills
+     order by name`,
+  );
+
+  return rows.map(mapSkillRow);
+}
+
+export async function getSkillById(id: string): Promise<Skill> {
+  const { rows } = await getPool().query<SkillRow>(
+    `select id, name, description, body, license, compatibility, allowed_tools, metadata,
+            version, enabled, created_at, updated_at
+     from agent_skills
+     where id = $1`,
+    [id],
+  );
+
+  if (rows.length === 0) {
+    throw new SkillNotFoundError(id);
+  }
+
+  return mapSkillRow(rows[0]);
+}
+
+export async function createSkill(input: {
+  name: string;
+  description: string;
+  body?: string;
+  license?: string | null;
+  compatibility?: string | null;
+  allowedTools?: string[] | null;
+  metadata?: Record<string, unknown> | null;
+  enabled?: boolean;
+}): Promise<Skill> {
+  validateSkillInput({
+    name: input.name,
+    description: input.description,
+    compatibility: input.compatibility,
+  });
+
+  // Check for duplicate name
+  const existing = await getPool().query(`select id from agent_skills where name = $1`, [
+    input.name.trim(),
+  ]);
+  if (existing.rows.length > 0) {
+    throw new SkillDuplicateNameError(input.name.trim());
+  }
+
+  const { rows } = await getPool().query<SkillRow>(
+    `insert into agent_skills (name, description, body, license, compatibility, allowed_tools, metadata, enabled)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
+     returning id, name, description, body, license, compatibility, allowed_tools, metadata,
+               version, enabled, created_at, updated_at`,
+    [
+      input.name.trim(),
+      input.description.trim(),
+      input.body ?? "",
+      input.license ?? null,
+      input.compatibility ?? null,
+      JSON.stringify(input.allowedTools ?? null),
+      JSON.stringify(input.metadata ?? null),
+      input.enabled ?? true,
+    ],
+  );
+
+  return mapSkillRow(rows[0]);
+}
+
+export async function updateSkill(
+  id: string,
+  input: {
+    description?: string;
+    body?: string;
+    license?: string | null;
+    compatibility?: string | null;
+    allowedTools?: string[] | null;
+    metadata?: Record<string, unknown> | null;
+    enabled?: boolean;
+  },
+): Promise<Skill> {
+  // Verify the skill exists
+  await getSkillById(id);
+
+  // Validate if description/compatibility are being updated
+  if (input.description !== undefined || input.compatibility !== undefined) {
+    const current = await getSkillById(id);
+    validateSkillInput({
+      name: current.name,
+      description: input.description ?? current.description,
+      compatibility: input.compatibility ?? current.compatibility,
+    });
+  }
+
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  let idx = 1;
+
+  if (input.description !== undefined) {
+    sets.push(`description = $${idx++}`);
+    values.push(input.description.trim());
+  }
+  if (input.body !== undefined) {
+    sets.push(`body = $${idx++}`);
+    values.push(input.body);
+  }
+  if (input.license !== undefined) {
+    sets.push(`license = $${idx++}`);
+    values.push(input.license);
+  }
+  if (input.compatibility !== undefined) {
+    sets.push(`compatibility = $${idx++}`);
+    values.push(input.compatibility);
+  }
+  if (input.allowedTools !== undefined) {
+    sets.push(`allowed_tools = $${idx++}`);
+    values.push(JSON.stringify(input.allowedTools));
+  }
+  if (input.metadata !== undefined) {
+    sets.push(`metadata = $${idx++}`);
+    values.push(JSON.stringify(input.metadata));
+  }
+  if (input.enabled !== undefined) {
+    sets.push(`enabled = $${idx++}`);
+    values.push(input.enabled);
+  }
+
+  if (sets.length === 0) {
+    return getSkillById(id);
+  }
+
+  sets.push(`updated_at = now()`);
+  values.push(id);
+
+  const { rows } = await getPool().query<SkillRow>(
+    `update agent_skills set ${sets.join(", ")} where id = $${idx}
+     returning id, name, description, body, license, compatibility, allowed_tools, metadata,
+               version, enabled, created_at, updated_at`,
+    values,
+  );
+
+  return mapSkillRow(rows[0]);
+}
+
+export async function deleteSkill(id: string): Promise<Skill> {
+  const skill = await getSkillById(id);
+
+  await getPool().query(`delete from agent_skills where id = $1`, [id]);
+
+  return skill;
 }
 
 // --- Internals --------------------------------------------------------------
