@@ -23,6 +23,7 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
+import { SkillsPanel } from "@/components/skills-panel";
 import { TasksPanel } from "@/components/tasks-panel";
 import { Button } from "@/components/ui/button";
 import {
@@ -144,6 +145,7 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <SkillsPanel />
             <TasksPanel />
             <TokenUsageMenu
               latestBreakdown={tokenUsageSummary.latestBreakdown}
