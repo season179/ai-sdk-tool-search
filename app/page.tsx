@@ -23,7 +23,7 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
-import { SkillsPanel } from "@/components/skills-panel";
+import { AppHeader } from "@/components/app-header";
 import { TasksPanel } from "@/components/tasks-panel";
 import { TokenUsageMenu } from "@/components/token-usage-menu";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,7 @@ import {
   getTokenUsageBreakdown,
   getToolSearchMetadata,
 } from "@/lib/token-usage-getters";
+import { useMeasuredHeight } from "@/lib/use-measured-height";
 
 const BUSY_STATUSES = new Set(["submitted", "streaming"]);
 type ChatMessage = UIMessage<ChatMessageMetadata>;
@@ -128,20 +129,9 @@ export default function ChatPage() {
       className="h-dvh overflow-hidden bg-background [--composer-height:8.75rem] [--header-height:4.5rem] sm:[--composer-height:10.125rem]"
       style={shellStyle}
     >
-      <header
-        className="fixed inset-x-0 top-0 z-30 bg-background/95 px-4 py-3 backdrop-blur sm:px-8 sm:py-4 lg:px-10"
-        ref={headerRef}
-      >
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-foreground">OpenRouter Chat</p>
-            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-              <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
-              <span>{isBusy ? "Responding" : "Ready"}</span>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <SkillsPanel />
+      <AppHeader
+        actions={
+          <>
             <TasksPanel />
             <TokenUsageMenu
               latestBreakdown={tokenUsageSummary.latestBreakdown}
@@ -150,9 +140,16 @@ export default function ChatPage() {
               latestUsage={tokenUsageSummary.latestUsage}
               sessionUsage={tokenUsageSummary.sessionUsage}
             />
-          </div>
-        </div>
-      </header>
+          </>
+        }
+        ref={headerRef}
+        status={
+          <>
+            <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
+            <span>{isBusy ? "Responding" : "Ready"}</span>
+          </>
+        }
+      />
 
       <Conversation className="fixed inset-x-0 bottom-[var(--composer-height)] top-[var(--header-height)] px-4 sm:px-8 lg:px-10">
         <ConversationContent className="mx-auto w-full max-w-7xl py-6 sm:py-10" ref={contentRef}>
@@ -258,30 +255,4 @@ export default function ChatPage() {
       </div>
     </main>
   );
-}
-
-function useMeasuredHeight<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
-  const [height, setHeight] = useState<number | null>(null);
-
-  useEffect(() => {
-    const element = ref.current;
-
-    if (!element || typeof ResizeObserver === "undefined") {
-      return;
-    }
-
-    const updateHeight = () => {
-      const nextHeight = Math.ceil(element.getBoundingClientRect().height);
-      setHeight((currentHeight) => (currentHeight === nextHeight ? currentHeight : nextHeight));
-    };
-    const observer = new ResizeObserver(updateHeight);
-
-    updateHeight();
-    observer.observe(element);
-
-    return () => observer.disconnect();
-  }, []);
-
-  return [ref, height] as const;
 }
