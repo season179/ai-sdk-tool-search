@@ -1,6 +1,17 @@
 "use client";
 
-import { ArrowLeft, Eye, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Eye,
+  FileText,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   type CSSProperties,
   type KeyboardEvent,
@@ -14,7 +25,7 @@ import { Streamdown } from "streamdown";
 
 import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
-import type { Skill } from "@/lib/skills/skills";
+import type { Skill, SkillResource } from "@/lib/skills/skills";
 import { useMeasuredHeight } from "@/lib/use-measured-height";
 import { cn } from "@/lib/utils";
 
@@ -694,14 +705,7 @@ function SkillEditor({
 
       <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
         <div className="mx-auto w-full max-w-2xl space-y-8">
-          {formError ? (
-            <p
-              className="rounded-md border border-destructive/30 px-3 py-2 text-xs text-destructive"
-              role="alert"
-            >
-              {formError}
-            </p>
-          ) : null}
+          {formError ? <ErrorBanner message={formError} /> : null}
 
           {/* Metadata tier — always shipped to the model. */}
           <section className="space-y-4">
@@ -790,6 +794,24 @@ function SkillEditor({
 
             <BodyEditor onChange={(body) => update({ body })} value={form.body} />
           </section>
+
+          {/* References tier — bundled files the agent reads on demand. Each row is
+              its own CRUD entity against the resource endpoints, not part of Save. */}
+          <section className="space-y-4">
+            <TierHeader
+              description="Bundled files an agent reads on demand via skill_read."
+              tier="Loaded on demand"
+              title="References"
+            />
+
+            {isCreate || skill === null ? (
+              <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
+                Create the skill first, then add references to it.
+              </p>
+            ) : (
+              <ReferencesSection onChanged={onUpdated} skillId={skill.id} />
+            )}
+          </section>
         </div>
       </div>
     </div>
@@ -815,6 +837,17 @@ function TierHeader({
         {tier}
       </span>
     </div>
+  );
+}
+
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <p
+      className="rounded-md border border-destructive/30 px-3 py-2 text-xs text-destructive"
+      role="alert"
+    >
+      {message}
+    </p>
   );
 }
 
@@ -958,7 +991,17 @@ function ChipInput({
   );
 }
 
-function BodyEditor({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+function BodyEditor({
+  value,
+  onChange,
+  placeholder = "# Skill body\n\nMarkdown loaded on demand when the skill runs.",
+  minHeightClass = "min-h-[20rem]",
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder?: string;
+  minHeightClass?: string;
+}) {
   const [view, setView] = useState<"edit" | "preview">("edit");
 
   return (
@@ -976,14 +1019,16 @@ function BodyEditor({ value, onChange }: { value: string; onChange: (next: strin
 
       {view === "edit" ? (
         <textarea
-          className={cn(FIELD_CLASS, "min-h-[20rem] resize-y font-mono leading-6")}
+          className={cn(FIELD_CLASS, minHeightClass, "resize-y font-mono leading-6")}
           onChange={(event) => onChange(event.target.value)}
-          placeholder="# Skill body&#10;&#10;Markdown loaded on demand when the skill runs."
+          placeholder={placeholder}
           spellCheck={false}
           value={value}
         />
       ) : value.trim() ? (
-        <div className="min-h-[20rem] rounded-md border border-border bg-background px-4 py-3">
+        <div
+          className={cn(minHeightClass, "rounded-md border border-border bg-background px-4 py-3")}
+        >
           <Streamdown className="break-words text-sm leading-6">{value}</Streamdown>
         </div>
       ) : (
@@ -1018,5 +1063,445 @@ function ViewToggle({
     >
       {children}
     </button>
+  );
+}
+
+// --- References tier --------------------------------------------------------
+
+// Preset content types offered in the select; a freeform override covers the rest.
+const RESOURCE_CONTENT_TYPES = ["text/markdown", "application/json", "text/plain"] as const;
+const CUSTOM_CONTENT_TYPE = "__custom__";
+
+// Mirror of the server-side `validateResourcePath` so bad paths are caught before
+// the round-trip. The API stays the source of truth and owns duplicate detection.
+function validateResourcePathClient(path: string): string | null {
+  if (!path) {
+    return "Path is required.";
+  }
+  if (path.startsWith("/")) {
+    return "Path must not start with '/'.";
+  }
+  if (path.includes("..")) {
+    return "Path must not contain '..' segments.";
+  }
+  return null;
+}
+
+// `add` opens a blank editor at the foot of the list; `edit` swaps a single row
+// for its editor. Only one is ever open at a time, so reusing one input id is safe.
+type ResourceEditTarget = { kind: "add" } | { kind: "edit"; id: string } | null;
+
+function ReferencesSection({ skillId, onChanged }: { skillId: string; onChanged: () => void }) {
+  const [resources, setResources] = useState<SkillResource[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<ResourceEditTarget>(null);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+
+    try {
+      const response = await fetch(`/api/skills/${skillId}/resources`);
+      const data: { resources?: SkillResource[]; error?: string } = await response
+        .json()
+        .catch(() => ({}));
+
+      if (!response.ok || !data.resources) {
+        throw new Error(data.error ?? "Failed to load references.");
+      }
+
+      setResources(data.resources);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load references.");
+    } finally {
+      setLoading(false);
+    }
+  }, [skillId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // After a successful add/edit: collapse the open editor, reload the list, and let
+  // the parent refresh its reference-count badge.
+  const handleSaved = useCallback(async () => {
+    setEditTarget(null);
+    await refresh();
+    onChanged();
+  }, [refresh, onChanged]);
+
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/skills/${skillId}/resources/${id}`, { method: "DELETE" });
+
+      if (!response.ok) {
+        const data: { error?: string } = await response.json().catch(() => ({}));
+        throw new Error(data.error ?? "Failed to delete the reference.");
+      }
+
+      setConfirmingDeleteId(null);
+      await refresh();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete the reference.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {error ? <ErrorBanner message={error} /> : null}
+
+      {loading && resources.length === 0 ? (
+        <p className="px-1 py-4 text-xs text-muted-foreground" role="status">
+          Loading references…
+        </p>
+      ) : resources.length === 0 && editTarget?.kind !== "add" ? (
+        <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
+          No references yet.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {resources.map((resource) =>
+            editTarget?.kind === "edit" && editTarget.id === resource.id ? (
+              <li key={resource.id}>
+                <ResourceEditor
+                  onCancel={() => setEditTarget(null)}
+                  onSaved={() => void handleSaved()}
+                  resource={resource}
+                  skillId={skillId}
+                />
+              </li>
+            ) : (
+              <li key={resource.id}>
+                <ResourceRow
+                  confirming={confirmingDeleteId === resource.id}
+                  deleting={deletingId === resource.id}
+                  disabled={
+                    editTarget !== null || (deletingId !== null && deletingId !== resource.id)
+                  }
+                  onCancelDelete={() => setConfirmingDeleteId(null)}
+                  onConfirmDelete={() => void handleDelete(resource.id)}
+                  onEdit={() => {
+                    setConfirmingDeleteId(null);
+                    setError(null);
+                    setEditTarget({ kind: "edit", id: resource.id });
+                  }}
+                  onRequestDelete={() => {
+                    setError(null);
+                    setConfirmingDeleteId(resource.id);
+                  }}
+                  resource={resource}
+                />
+              </li>
+            ),
+          )}
+        </ul>
+      )}
+
+      {editTarget?.kind === "add" ? (
+        <ResourceEditor
+          onCancel={() => setEditTarget(null)}
+          onSaved={() => void handleSaved()}
+          resource={null}
+          skillId={skillId}
+        />
+      ) : (
+        <Button
+          disabled={editTarget !== null}
+          onClick={() => {
+            setConfirmingDeleteId(null);
+            setError(null);
+            setEditTarget({ kind: "add" });
+          }}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          <Plus className="size-3.5" />
+          Add reference
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function ResourceRow({
+  resource,
+  confirming,
+  deleting,
+  disabled,
+  onEdit,
+  onRequestDelete,
+  onConfirmDelete,
+  onCancelDelete,
+}: {
+  resource: SkillResource;
+  confirming: boolean;
+  deleting: boolean;
+  disabled: boolean;
+  onEdit: () => void;
+  onRequestDelete: () => void;
+  onConfirmDelete: () => void;
+  onCancelDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-border/80 px-3 py-2.5">
+      <div className="flex min-w-0 items-center gap-2">
+        <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <p
+            className="truncate font-mono text-xs font-medium text-foreground"
+            title={resource.path}
+          >
+            {resource.path}
+          </p>
+          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+            {resource.contentType}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1">
+        {confirming ? (
+          <>
+            <Button
+              disabled={deleting}
+              onClick={onConfirmDelete}
+              size="sm"
+              type="button"
+              variant="destructive"
+            >
+              {deleting ? "Deleting…" : "Confirm"}
+            </Button>
+            <Button
+              disabled={deleting}
+              onClick={onCancelDelete}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              aria-label={`Edit ${resource.path}`}
+              disabled={disabled}
+              onClick={onEdit}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+            <Button
+              aria-label={`Delete ${resource.path}`}
+              disabled={disabled}
+              onClick={onRequestDelete}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResourceEditor({
+  skillId,
+  resource,
+  onCancel,
+  onSaved,
+}: {
+  skillId: string;
+  /** The resource being edited, or `null` to add a new one. */
+  resource: SkillResource | null;
+  onCancel: () => void;
+  onSaved: (resource: SkillResource) => void;
+}) {
+  const isNew = resource === null;
+
+  const [path, setPath] = useState(resource?.path ?? "");
+  const [contentType, setContentType] = useState(resource?.contentType ?? "text/markdown");
+  const [body, setBody] = useState(resource?.body ?? "");
+  const [pathError, setPathError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const isDirty =
+    isNew ||
+    path !== resource.path ||
+    contentType !== resource.contentType ||
+    body !== resource.body;
+
+  async function handleSave() {
+    const trimmedPath = path.trim();
+    const nextPathError = validateResourcePathClient(trimmedPath);
+    setPathError(nextPathError);
+    setFormError(null);
+
+    if (nextPathError) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const url = isNew
+        ? `/api/skills/${skillId}/resources`
+        : `/api/skills/${skillId}/resources/${resource.id}`;
+
+      // An empty custom content type would otherwise be stored verbatim — the
+      // server's `?? "text/markdown"` default only fires on null/undefined, not "".
+      const response = await fetch(url, {
+        method: isNew ? "POST" : "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: trimmedPath,
+          contentType: contentType.trim() || "text/markdown",
+          body,
+        }),
+      });
+      const data: { resource?: SkillResource; error?: string } = await response
+        .json()
+        .catch(() => ({}));
+
+      if (!response.ok || !data.resource) {
+        const message = data.error ?? "Failed to save the reference.";
+        // The unique (skill_id, path) collision comes back as 409 — surface it on the
+        // path field where it can be fixed, not as a generic form-level error.
+        if (response.status === 409) {
+          setPathError(message);
+        } else {
+          setFormError(message);
+        }
+        return;
+      }
+
+      onSaved(data.resource);
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "Failed to save the reference.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4 rounded-md border border-primary/40 bg-primary/[0.03] px-3 py-3">
+      {formError ? <ErrorBanner message={formError} /> : null}
+
+      <Field
+        error={pathError ?? undefined}
+        hint="e.g. schemas/request.json"
+        htmlFor="resource-path"
+        label="Path"
+        required
+      >
+        <input
+          className={cn(FIELD_CLASS, "font-mono")}
+          id="resource-path"
+          onChange={(event) => setPath(event.target.value)}
+          placeholder="reference.md"
+          spellCheck={false}
+          value={path}
+        />
+      </Field>
+
+      <Field htmlFor="resource-content-type" label="Content type">
+        <ContentTypeSelect
+          id="resource-content-type"
+          onChange={setContentType}
+          value={contentType}
+        />
+      </Field>
+
+      <div>
+        <span className="text-xs font-medium text-foreground">Body</span>
+        <div className="mt-1">
+          <BodyEditor
+            minHeightClass="min-h-[12rem]"
+            onChange={setBody}
+            placeholder={"# reference\n\nMarkdown body, loaded on demand via skill_read."}
+            value={body}
+          />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Button
+          disabled={saving || !isDirty}
+          onClick={() => void handleSave()}
+          size="sm"
+          type="button"
+        >
+          {saving ? "Saving…" : isNew ? "Add reference" : "Save reference"}
+        </Button>
+        <Button disabled={saving} onClick={onCancel} size="sm" type="button" variant="ghost">
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ContentTypeSelect({
+  value,
+  onChange,
+  id,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  id?: string;
+}) {
+  const isPreset = (RESOURCE_CONTENT_TYPES as readonly string[]).includes(value);
+  const [custom, setCustom] = useState(!isPreset);
+
+  return (
+    <div className="space-y-2">
+      <select
+        className={FIELD_CLASS}
+        id={id}
+        onChange={(event) => {
+          if (event.target.value === CUSTOM_CONTENT_TYPE) {
+            setCustom(true);
+            return;
+          }
+          setCustom(false);
+          onChange(event.target.value);
+        }}
+        value={custom ? CUSTOM_CONTENT_TYPE : value}
+      >
+        {RESOURCE_CONTENT_TYPES.map((type) => (
+          <option key={type} value={type}>
+            {type}
+          </option>
+        ))}
+        <option value={CUSTOM_CONTENT_TYPE}>Custom…</option>
+      </select>
+
+      {custom ? (
+        <input
+          aria-label="Custom content type"
+          className={cn(FIELD_CLASS, "font-mono")}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="e.g. application/yaml"
+          spellCheck={false}
+          value={value}
+        />
+      ) : null}
+    </div>
   );
 }
