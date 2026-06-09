@@ -3,20 +3,15 @@ import { createAgentUIStreamResponse, smoothStream, ToolLoopAgent, type UIMessag
 
 import { mockToolCount, mockTools } from "@/lib/mock-tools";
 import { schedulerTools } from "@/lib/scheduler/tool-specs";
-import { buildSkillsCatalog } from "@/lib/skills/catalog";
-import { getEnabledSkillsResourceChars, listEnabledSkills } from "@/lib/skills/skills";
-import { createSkillTools } from "@/lib/skills/tools";
 import {
   type ChatMessageMetadata,
   estimateRequestTokenUsage,
   type RequestTokenEstimate,
-  type SkillReadTraceEvent,
   type ToolSearchTraceEvent,
   toTokenUsage,
   toTokenUsageBreakdown,
 } from "@/lib/token-usage";
 import {
-  buildSkillsMetadata,
   buildToolSearchMetadata,
   createToolSearchTools,
   resolveToolExposureMode,
@@ -81,45 +76,14 @@ export async function POST(req: Request) {
     const openrouter = createOpenRouter({ apiKey });
     const toolExposureMode = resolveToolExposureMode(process.env.TOOL_EXPOSURE_MODE);
     const toolSearchTrace: ToolSearchTraceEvent[] = [];
-    const skillTrace: SkillReadTraceEvent[] = [];
-
-    // Load enabled skills (graceful fallback when DB is absent)
-    let enabledSkills: Awaited<ReturnType<typeof listEnabledSkills>> = [];
-    try {
-      enabledSkills = await listEnabledSkills();
-    } catch {
-      // DB unavailable — continue with zero skills
-    }
-
-    // Register skill_read only when there is at least one skill to read — the
-    // spec warns against exposing a skill tool with no valid options. The
-    // enabled skill names constrain the tool's `name` enum (anti-hallucination).
-    const skillTools =
-      enabledSkills.length > 0
-        ? createSkillTools(
-            skillTrace,
-            enabledSkills.map((skill) => skill.name),
-          )
-        : {};
     const tools =
       toolExposureMode === "all"
-        ? { ...mockTools, ...schedulerTools, ...skillTools }
-        : { ...createToolSearchTools(toolSearchTrace), ...skillTools };
+        ? { ...mockTools, ...schedulerTools }
+        : createToolSearchTools(toolSearchTrace);
     const requestEstimates: RequestTokenEstimate[] = [];
 
-    // Compute all-resources baseline before the agent loop (single aggregate query)
-    let allResourcesChars = 0;
-    try {
-      allResourcesChars = await getEnabledSkillsResourceChars();
-    } catch {
-      // DB unavailable — baseline stays 0
-    }
-
-    // Tier-1 catalog injected into the system prompt (empty string when no skills).
-    const skillInstructions = buildSkillsCatalog(enabledSkills);
-
     const agent = new ToolLoopAgent({
-      instructions: `${SYSTEM_PROMPT} The current UTC time is ${new Date().toISOString()}.${skillInstructions}`,
+      instructions: `${SYSTEM_PROMPT} The current UTC time is ${new Date().toISOString()}.`,
       model: openrouter.chat(model),
       tools,
     });
@@ -142,7 +106,6 @@ export async function POST(req: Request) {
       },
       headers: {
         "x-mock-tools": String(mockToolCount),
-        "x-skill-count": String(enabledSkills.length),
         "x-total-tools": String(Object.keys(tools).length),
         "x-openrouter-model": model,
         "x-tool-exposure-mode": toolExposureMode,
@@ -159,11 +122,6 @@ export async function POST(req: Request) {
             mode: toolExposureMode,
             requestEstimates,
             trace: toolSearchTrace,
-          }),
-          skills: buildSkillsMetadata({
-            enabledSkills,
-            skillTrace,
-            allResourcesChars,
           }),
         };
       },

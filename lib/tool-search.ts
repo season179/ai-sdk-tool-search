@@ -15,12 +15,9 @@ import {
   isSchedulerToolName,
   schedulerToolSpecs,
 } from "@/lib/scheduler/tool-specs";
-import { buildSkillsCatalog } from "@/lib/skills/catalog";
 import {
   estimateTokensFromChars,
   type RequestTokenEstimate,
-  type SkillReadTraceEvent,
-  type SkillsMetadata,
   type ToolSearchMetadata,
   type ToolSearchMode,
   type ToolSearchTraceEvent,
@@ -236,77 +233,6 @@ function runToolSearch(input: SearchInput) {
     limit,
     totalAvailable: catalog.length,
     matches,
-  };
-}
-
-export function buildSkillsMetadata({
-  enabledSkills,
-  skillTrace,
-  allResourcesChars,
-  activatedResourceChars,
-}: {
-  enabledSkills: Array<{ name: string; description: string; body: string }>;
-  skillTrace: SkillReadTraceEvent[];
-  allResourcesChars?: number;
-  activatedResourceChars?: number;
-}): SkillsMetadata {
-  const enabledSkillCount = enabledSkills.length;
-
-  // Tier-1 cost: measure the exact catalog string injected into the system
-  // prompt (boilerplate + per-skill lines), not just raw name+description, so
-  // the displayed metadata cost matches what is actually sent.
-  const metadataChars = buildSkillsCatalog(enabledSkills).length;
-  const metadataTokens = estimateTokensFromChars(metadataChars);
-
-  // All-bodies baseline: what it would cost to inline every skill body
-  const allBodiesChars = enabledSkills.reduce((sum, skill) => sum + skill.body.length, 0);
-  const allBodiesTokens = estimateTokensFromChars(allBodiesChars);
-
-  // Body reads: skill_read events without a path
-  const bodyReads = skillTrace.filter((event) => event.found && !event.path);
-  const bodyReadCount = bodyReads.length;
-  // Estimate activated body tokens from unique skill names read
-  const uniqueBodyNames = new Set(bodyReads.map((event) => event.name));
-  const activatedBodyChars = enabledSkills
-    .filter((skill) => uniqueBodyNames.has(skill.name))
-    .reduce((sum, skill) => sum + skill.body.length, 0);
-  const activatedBodyTokens = estimateTokensFromChars(activatedBodyChars);
-  const savedBodyTokens = Math.max(0, allBodiesTokens - activatedBodyTokens);
-
-  // Resource reads: skill_read events with a path
-  const resourceReads = skillTrace.filter((event) => event.found && event.path);
-  const resourceReadCount = resourceReads.length;
-  // Estimate activated resource chars from unique resources read (deduped by name+path).
-  // Prefer an explicit override; otherwise sum the char counts captured at read time.
-  const uniqueResourceChars = new Map<string, number>();
-  for (const event of resourceReads) {
-    const key = `${event.name} ${event.path}`;
-    if (!uniqueResourceChars.has(key)) {
-      uniqueResourceChars.set(key, event.chars ?? 0);
-    }
-  }
-  const derivedActivatedResourceChars = [...uniqueResourceChars.values()].reduce(
-    (sum, chars) => sum + chars,
-    0,
-  );
-  const activatedResourceTokens = estimateTokensFromChars(
-    activatedResourceChars ?? derivedActivatedResourceChars,
-  );
-  const allResourcesTokens = estimateTokensFromChars(allResourcesChars ?? 0);
-  const savedResourceTokens = Math.max(0, allResourcesTokens - activatedResourceTokens);
-
-  return {
-    enabledSkillCount,
-    metadataTokens,
-    bodyReadCount,
-    activatedBodyTokens,
-    allBodiesTokens,
-    savedBodyTokens,
-    resourceReadCount,
-    activatedResourceTokens,
-    allResourcesTokens,
-    savedResourceTokens,
-    trace: skillTrace,
   };
 }
 

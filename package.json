@@ -10,7 +10,6 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
     "db:migrate": "tsx scripts/migrate.ts",
     "worker:scheduled-tasks": "tsx workers/scheduled-tasks.ts"
   },
@@ -38,7 +37,6 @@
     "@types/react-dom": "19.2.3",
     "tailwindcss": "4.3.0",
     "tsx": "^4.22.4",
-    "typescript": "6.0.3",
-    "vitest": "^4.1.8"
+    "typescript": "6.0.3"
   }
 }
