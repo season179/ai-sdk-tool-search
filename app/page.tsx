@@ -23,6 +23,7 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
+import { SiteNav } from "@/components/site-nav";
 import { TasksPanel } from "@/components/tasks-panel";
 import { Button } from "@/components/ui/button";
 import {
@@ -135,7 +136,7 @@ export default function ChatPage() {
         className="fixed inset-x-0 top-0 z-30 bg-background/95 px-4 py-3 backdrop-blur sm:px-8 sm:py-4 lg:px-10"
         ref={headerRef}
       >
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
+        <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-foreground">OpenRouter Chat</p>
             <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
@@ -143,7 +144,8 @@ export default function ChatPage() {
               <span>{isBusy ? "Responding" : "Ready"}</span>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            <SiteNav />
             <TasksPanel />
             <TokenUsageMenu
               latestBreakdown={tokenUsageSummary.latestBreakdown}
