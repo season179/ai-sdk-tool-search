@@ -2,6 +2,7 @@
 
 import {
   ArrowLeft,
+  DatabaseZap,
   Eye,
   FileText,
   Pencil,
@@ -19,6 +20,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
@@ -34,6 +36,13 @@ type ListState = {
   skills: Skill[];
   loading: boolean;
   error: string | null;
+  /**
+   * The skills service couldn't be reached (5xx or a network failure) — almost
+   * always a missing/down Postgres, since the route only 500s on DB errors. Drives
+   * the full-surface "needs the database" state instead of a misleading "no skills
+   * yet" empty state or a dead spinner.
+   */
+  unavailable: boolean;
 };
 
 type SkillsShellStyle = CSSProperties & {
@@ -42,28 +51,51 @@ type SkillsShellStyle = CSSProperties & {
 
 export default function SkillsPage() {
   const [headerRef, headerHeight] = useMeasuredHeight<HTMLElement>();
-  const [state, setState] = useState<ListState>({ skills: [], loading: true, error: null });
+  const [state, setState] = useState<ListState>({
+    skills: [],
+    loading: true,
+    error: null,
+    unavailable: false,
+  });
   const [filter, setFilter] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // The editor reports its unsaved-edits state up so navigation away from a dirty
+  // editor can be intercepted (see `requestNavigation`).
+  const [editorDirty, setEditorDirty] = useState(false);
+  // A navigation deferred behind the unsaved-changes dialog. `null` when no guard
+  // is pending; otherwise the action to run if the user chooses to discard.
+  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
 
   const refresh = useCallback(async () => {
     setState((current) => ({ ...current, loading: true }));
 
     try {
       const response = await fetch("/api/skills");
-      const body: { skills?: Skill[]; error?: string } = await response.json();
+      const body: { skills?: Skill[]; error?: string } = await response.json().catch(() => ({}));
 
       if (!response.ok || !body.skills) {
-        throw new Error(body.error ?? "Failed to load skills.");
+        // Keep any already-loaded skills on a failed refresh — a transient blip
+        // shouldn't blow away the visible list. A 5xx means the service is down
+        // (DB unreachable); a 4xx is a request error surfaced inline.
+        setState((current) => ({
+          ...current,
+          loading: false,
+          error: body.error ?? "Failed to load skills.",
+          unavailable: response.status >= 500,
+        }));
+        return;
       }
 
-      setState({ skills: body.skills, loading: false, error: null });
+      setState({ skills: body.skills, loading: false, error: null, unavailable: false });
     } catch (error) {
+      // A thrown fetch (no response at all) means we couldn't reach the app/DB.
+      // Treat it as unavailable but, again, retain whatever was already loaded.
       setState((current) => ({
         ...current,
         loading: false,
         error: error instanceof Error ? error.message : "Failed to load skills.",
+        unavailable: true,
       }));
     }
   }, []);
@@ -102,30 +134,82 @@ export default function SkillsPage() {
   // render side by side. `showDetail` drives that swap.
   const showDetail = creating || selected !== null;
 
+  // Take over the whole surface with the DB-unavailable state only when we have
+  // nothing to show; if a refresh fails but skills are still cached, keep the panes
+  // and surface the failure inline instead.
+  const showUnavailable = state.unavailable && state.skills.length === 0;
+  // Initial fetch still in flight with nothing to show yet → skeletons.
+  const firstLoad = state.loading && state.skills.length === 0 && !state.unavailable;
+  // Fetch settled with an empty, reachable catalog (no error) → first-run teaching.
+  const noSkills =
+    !state.loading && !state.unavailable && !state.error && state.skills.length === 0;
+
   const shellStyle = useMemo<SkillsShellStyle | undefined>(
     () => (headerHeight === null ? undefined : { "--header-height": `${headerHeight}px` }),
     [headerHeight],
   );
 
-  function selectSkill(id: string) {
-    setSelectedId(id);
+  // Imperatively reset the detail pane without consulting the dirty guard — used
+  // after a save/create/delete where the edits are already persisted or gone.
+  const resetDetail = useCallback(() => {
     setCreating(false);
+    setSelectedId(null);
+    setEditorDirty(false);
+  }, []);
+
+  // Gate a pane-switching action behind the unsaved-changes dialog when the editor
+  // has pending edits; otherwise run it immediately.
+  const requestNavigation = useCallback(
+    (action: () => void) => {
+      if (editorDirty) {
+        setPendingNav(() => action);
+        return;
+      }
+      action();
+    },
+    [editorDirty],
+  );
+
+  function selectSkill(id: string) {
+    if (id === selectedId && !creating) {
+      return;
+    }
+    requestNavigation(() => {
+      setSelectedId(id);
+      setCreating(false);
+      setEditorDirty(false);
+    });
   }
 
   function startCreate() {
-    setCreating(true);
-    setSelectedId(null);
+    if (creating) {
+      return;
+    }
+    requestNavigation(() => {
+      setCreating(true);
+      setSelectedId(null);
+      setEditorDirty(false);
+    });
   }
 
   function closeDetail() {
-    setCreating(false);
-    setSelectedId(null);
+    requestNavigation(resetDetail);
   }
+
+  function discardPendingNav() {
+    const action = pendingNav;
+    setPendingNav(null);
+    action?.();
+  }
+
+  // Stable so the dialog's keydown effect doesn't re-subscribe on every render.
+  const keepEditing = useCallback(() => setPendingNav(null), []);
 
   // After a create, refresh so the new row appears, then select it — the await
   // ordering keeps the "drop unknown selection" effect from clearing it mid-flight.
   const handleCreated = useCallback(
     async (skill: Skill) => {
+      setEditorDirty(false);
       await refresh();
       setSelectedId(skill.id);
       setCreating(false);
@@ -147,112 +231,133 @@ export default function SkillsPage() {
       <h1 className="sr-only">Skills</h1>
 
       <div className="fixed inset-x-0 bottom-0 top-[var(--header-height)] flex">
-        <section
-          aria-label="Skills"
-          className={cn(
-            "h-full w-full flex-col border-border lg:flex lg:w-80 lg:shrink-0 lg:border-r xl:w-96",
-            showDetail ? "hidden" : "flex",
-          )}
-        >
-          <div className="flex items-center justify-between gap-3 px-4 pt-4 sm:px-6">
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-foreground">Skills</h2>
-              <p aria-live="polite" className="mt-0.5 text-[11px] text-muted-foreground">
-                {state.loading ? "Loading…" : `${state.skills.length} total`}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <Button
-                aria-busy={state.loading}
-                aria-label="Refresh skills"
-                disabled={state.loading}
-                onClick={() => void refresh()}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                <RefreshCw className={cn("size-3.5", state.loading && "animate-spin")} />
-              </Button>
-              <Button
-                aria-pressed={creating}
-                className={cn(creating && "border-primary/60 bg-primary/5 text-primary")}
-                onClick={startCreate}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                <Plus className="size-3.5" />
-                New skill
-              </Button>
-            </div>
-          </div>
-
-          <div className="px-4 pt-3 sm:px-6">
-            <label className="relative block">
-              <Search className="-translate-y-1/2 absolute top-1/2 left-2.5 size-3.5 text-muted-foreground" />
-              <input
-                aria-label="Filter skills"
-                className="w-full rounded-md border border-border bg-background py-1.5 pr-2.5 pl-8 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                onChange={(event) => setFilter(event.target.value)}
-                placeholder="Filter by name or description"
-                type="search"
-                value={filter}
-              />
-            </label>
-          </div>
-
-          {state.error ? (
-            <p
-              className="mx-4 mt-3 rounded-md border border-destructive/30 px-3 py-2 text-xs text-destructive sm:mx-6"
-              role="alert"
+        {showUnavailable ? (
+          <DatabaseUnavailable loading={state.loading} onRetry={() => void refresh()} />
+        ) : (
+          <>
+            <section
+              aria-label="Skills"
+              className={cn(
+                "h-full w-full flex-col border-border lg:flex lg:w-80 lg:shrink-0 lg:border-r xl:w-96",
+                showDetail ? "hidden" : "flex",
+              )}
             >
-              {state.error}
-            </p>
-          ) : null}
+              <div className="flex items-center justify-between gap-3 px-4 pt-4 sm:px-6">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold text-foreground">Skills</h2>
+                  <p aria-live="polite" className="mt-0.5 text-[11px] text-muted-foreground">
+                    {firstLoad ? "Loading…" : `${state.skills.length} total`}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    aria-busy={state.loading}
+                    aria-label="Refresh skills"
+                    disabled={state.loading}
+                    onClick={() => void refresh()}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <RefreshCw className={cn("size-3.5", state.loading && "animate-spin")} />
+                  </Button>
+                  <Button
+                    aria-pressed={creating}
+                    className={cn(creating && "border-primary/60 bg-primary/5 text-primary")}
+                    onClick={startCreate}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <Plus className="size-3.5" />
+                    New skill
+                  </Button>
+                </div>
+              </div>
 
-          <div className="mt-3 flex-1 space-y-1.5 overflow-y-auto px-4 pb-4 sm:px-6">
-            {filtered.length === 0 ? (
-              <p className="px-1 py-6 text-center text-xs text-muted-foreground" role="status">
-                {state.loading
-                  ? "Loading skills…"
-                  : state.skills.length === 0
-                    ? "No skills yet. Create one to get started."
-                    : "No skills match your filter."}
-              </p>
-            ) : (
-              filtered.map((skill) => (
-                <SkillRow
-                  key={skill.id}
-                  onSelect={() => selectSkill(skill.id)}
-                  selected={skill.id === selectedId}
-                  skill={skill}
+              <div className="px-4 pt-3 sm:px-6">
+                <label className="relative block">
+                  <Search className="-translate-y-1/2 absolute top-1/2 left-2.5 size-3.5 text-muted-foreground" />
+                  <input
+                    aria-label="Filter skills"
+                    className="w-full rounded-md border border-border bg-background py-1.5 pr-2.5 pl-8 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                    onChange={(event) => setFilter(event.target.value)}
+                    placeholder="Filter by name or description"
+                    type="search"
+                    value={filter}
+                  />
+                </label>
+              </div>
+
+              {state.error ? (
+                <p
+                  className="mx-4 mt-3 rounded-md border border-destructive/30 px-3 py-2 text-xs text-destructive sm:mx-6"
+                  role="alert"
+                >
+                  {state.error}
+                </p>
+              ) : null}
+
+              {/* An empty list paired with an error (skills.length === 0 but not a
+                  first-run state) renders nothing here — the banner above already
+                  explains it, so we avoid a misleading "no skills yet" / "no matches". */}
+              <div className="mt-3 flex-1 space-y-1.5 overflow-y-auto px-4 pb-4 sm:px-6">
+                {firstLoad ? (
+                  <SkillListSkeleton />
+                ) : noSkills ? (
+                  <SkillsListEmpty onCreate={startCreate} />
+                ) : state.skills.length === 0 ? null : filtered.length === 0 ? (
+                  <p className="px-1 py-6 text-center text-xs text-muted-foreground" role="status">
+                    No skills match your filter.
+                  </p>
+                ) : (
+                  filtered.map((skill) => (
+                    <SkillRow
+                      key={skill.id}
+                      onSelect={() => selectSkill(skill.id)}
+                      selected={skill.id === selectedId}
+                      skill={skill}
+                    />
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section
+              aria-label="Skill detail"
+              className={cn(
+                "h-full min-w-0 flex-1 flex-col lg:flex",
+                showDetail ? "flex" : "hidden",
+              )}
+            >
+              {showDetail ? (
+                <SkillEditor
+                  key={creating ? "new" : (selected?.id ?? "none")}
+                  onBack={closeDetail}
+                  onCreated={handleCreated}
+                  onDeleted={() => {
+                    resetDetail();
+                    void refresh();
+                  }}
+                  onDirtyChange={setEditorDirty}
+                  onUpdated={() => void refresh()}
+                  skill={creating ? null : selected}
                 />
-              ))
-            )}
-          </div>
-        </section>
-
-        <section
-          aria-label="Skill detail"
-          className={cn("h-full min-w-0 flex-1 flex-col lg:flex", showDetail ? "flex" : "hidden")}
-        >
-          {showDetail ? (
-            <SkillEditor
-              key={creating ? "new" : (selected?.id ?? "none")}
-              onBack={closeDetail}
-              onCreated={handleCreated}
-              onDeleted={() => {
-                closeDetail();
-                void refresh();
-              }}
-              onUpdated={() => void refresh()}
-              skill={creating ? null : selected}
-            />
-          ) : (
-            <EmptyDetail />
-          )}
-        </section>
+              ) : firstLoad ? (
+                <EditorSkeleton />
+              ) : noSkills ? (
+                <FirstRunDetail onCreate={startCreate} />
+              ) : (
+                <EmptyDetail />
+              )}
+            </section>
+          </>
+        )}
       </div>
+
+      {pendingNav ? (
+        <UnsavedChangesDialog onDiscard={discardPendingNav} onKeepEditing={keepEditing} />
+      ) : null}
     </main>
   );
 }
@@ -265,6 +370,267 @@ function EmptyDetail() {
       <p className="max-w-xs text-xs text-muted-foreground">
         Pick a skill from the list to edit it, or create a new one.
       </p>
+    </div>
+  );
+}
+
+// --- Empty / loading / unavailable states -----------------------------------
+
+/** Compact first-run teaching shown in the master list when no skills exist. */
+function SkillsListEmpty({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-3 px-2 py-8 text-center" role="status">
+      <Sparkles className="size-5 text-muted-foreground/60" />
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-foreground">No skills yet</p>
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          A skill bundles instructions and files the agent loads progressively — only the metadata
+          stays in context.
+        </p>
+      </div>
+      <Button onClick={onCreate} size="sm" type="button">
+        <Plus className="size-3.5" />
+        Create your first skill
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Rich first-run teaching for the detail pane: spells out the three
+ * progressive-disclosure tiers so the empty surface explains the model rather
+ * than just saying "nothing here."
+ */
+function FirstRunDetail({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="skills-enter flex h-full flex-col items-center justify-center px-6 py-10">
+      <div className="w-full max-w-md space-y-6 text-center">
+        <div className="space-y-2">
+          <Sparkles className="mx-auto size-7 text-primary" />
+          <h2 className="text-base font-semibold text-foreground">Create your first skill</h2>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            A skill teaches the agent something new without bloating every request. Its three tiers
+            load progressively, so you only pay for what the agent actually reaches for.
+          </p>
+        </div>
+
+        <ul className="space-y-2 text-left">
+          <TierExplainer
+            alwaysLoaded
+            description="Name and description — always in the system prompt so the agent knows the skill exists."
+            title="Metadata"
+          />
+          <TierExplainer
+            description="The full instructions, fetched only when the agent invokes the skill."
+            title="Body"
+          />
+          <TierExplainer
+            description="Bundled files the agent reads on demand via skill_read — free until it does."
+            title="References"
+          />
+        </ul>
+
+        <Button onClick={onCreate} type="button">
+          <Plus className="size-3.5" />
+          Create your first skill
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function TierExplainer({
+  title,
+  description,
+  alwaysLoaded = false,
+}: {
+  title: string;
+  description: string;
+  alwaysLoaded?: boolean;
+}) {
+  return (
+    <li className="flex gap-2.5 rounded-md border border-border/70 px-3 py-2.5">
+      <span
+        aria-hidden
+        className={cn(
+          "mt-1.5 size-1.5 shrink-0 rounded-full",
+          alwaysLoaded ? "bg-primary" : "bg-muted-foreground/40",
+        )}
+      />
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-semibold text-foreground">{title}</p>
+          <span
+            className={cn(
+              "rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide",
+              alwaysLoaded ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
+            )}
+          >
+            {alwaysLoaded ? "Always loaded" : "Loaded on demand"}
+          </span>
+        </div>
+        <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{description}</p>
+      </div>
+    </li>
+  );
+}
+
+/**
+ * Full-surface state when the skills service can't be reached. The catalog lives
+ * in Postgres while chat runs without it, so this is the expected state on a
+ * DB-less setup — explain the fix instead of spinning forever.
+ */
+function DatabaseUnavailable({ loading, onRetry }: { loading: boolean; onRetry: () => void }) {
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center px-6 py-10 text-center">
+      <div className="w-full max-w-md space-y-4">
+        <DatabaseZap className="mx-auto size-7 text-muted-foreground/70" />
+        <div className="space-y-2">
+          <h2 className="text-base font-semibold text-foreground">Skills need the database</h2>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            The skill catalog lives in Postgres, and chat can run without it — so this page stays
+            dark until the database is reachable.
+          </p>
+        </div>
+        <div className="rounded-md border border-border/70 bg-muted/40 px-3 py-2.5 text-left">
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Set{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-foreground">
+              DATABASE_URL
+            </code>{" "}
+            and start Postgres on port <span className="font-mono text-foreground">5433</span> (
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-foreground">
+              docker compose up -d
+            </code>
+            ), then run{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-foreground">
+              pnpm db:migrate
+            </code>
+            .
+          </p>
+        </div>
+        <Button aria-busy={loading} disabled={loading} onClick={onRetry} type="button">
+          <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+          {loading ? "Retrying…" : "Retry"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// --- Skeletons --------------------------------------------------------------
+
+/** Pulse placeholder. `animate-pulse` is neutralized by the reduced-motion rule. */
+function Skeleton({ className }: { className?: string }) {
+  return <div aria-hidden className={cn("animate-pulse rounded bg-muted", className)} />;
+}
+
+function SkillListSkeleton() {
+  return (
+    <div aria-hidden className="space-y-1.5">
+      {Array.from({ length: 6 }, (_, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: static placeholder list
+        <div className="rounded-md border border-border/80 px-3 py-2.5" key={index}>
+          <div className="flex items-center justify-between gap-2">
+            <Skeleton className="h-3 w-32" />
+            <Skeleton className="h-3.5 w-12 rounded-full" />
+          </div>
+          <Skeleton className="mt-2 h-2.5 w-24" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EditorSkeleton() {
+  return (
+    <div aria-hidden className="flex h-full flex-col">
+      <div className="shrink-0 border-b border-border px-4 pt-4 pb-3 sm:px-8">
+        <div className="mx-auto flex w-full max-w-2xl items-center justify-between gap-3">
+          <Skeleton className="h-6 w-40" />
+          <Skeleton className="h-9 w-24" />
+        </div>
+      </div>
+      <div className="flex-1 px-4 py-6 sm:px-8">
+        <div className="mx-auto w-full max-w-2xl space-y-6">
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-44 w-full" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Unsaved-changes guard --------------------------------------------------
+
+/**
+ * Modal shown when the user tries to leave a dirty editor. Blocks the pending
+ * navigation until they choose; Escape and the backdrop both mean "keep editing"
+ * (the safe default — never silently discard).
+ */
+function UnsavedChangesDialog({
+  onDiscard,
+  onKeepEditing,
+}: {
+  onDiscard: () => void;
+  onKeepEditing: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Move focus into the modal on open (so the safe default is reachable) and let
+  // Escape mean "keep editing" — never silently discard.
+  useEffect(() => {
+    dialogRef.current?.focus();
+
+    function onKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        onKeepEditing();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onKeepEditing]);
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+      {/* Backdrop. */}
+      <button
+        aria-label="Keep editing"
+        className="absolute inset-0 bg-foreground/20 backdrop-blur-[1px]"
+        onClick={onKeepEditing}
+        tabIndex={-1}
+        type="button"
+      />
+      <div
+        aria-describedby="unsaved-changes-body"
+        aria-labelledby="unsaved-changes-title"
+        aria-modal="true"
+        className="skills-enter relative w-full max-w-sm rounded-lg border border-border bg-background p-5 shadow-[0_24px_70px_-36px_rgba(15,23,42,0.45)] outline-none"
+        ref={dialogRef}
+        role="dialog"
+        tabIndex={-1}
+      >
+        <h2 className="text-sm font-semibold text-foreground" id="unsaved-changes-title">
+          Discard unsaved changes?
+        </h2>
+        <p
+          className="mt-1.5 text-xs leading-relaxed text-muted-foreground"
+          id="unsaved-changes-body"
+        >
+          You've edited this skill but haven't saved. Leaving now drops those changes.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button onClick={onKeepEditing} type="button" variant="ghost">
+            Keep editing
+          </Button>
+          <Button onClick={onDiscard} type="button" variant="destructive">
+            Discard changes
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -427,6 +793,7 @@ function SkillEditor({
   onCreated,
   onUpdated,
   onDeleted,
+  onDirtyChange,
 }: {
   /** The skill being edited, or `null` to create a new one. */
   skill: Skill | null;
@@ -438,6 +805,9 @@ function SkillEditor({
   onUpdated: () => void;
   /** Called after a successful DELETE. */
   onDeleted: () => void;
+  /** Reports whether the form holds unsaved edits, so the parent can guard
+      navigation away from this editor. */
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const isCreate = skill === null;
 
@@ -461,20 +831,48 @@ function SkillEditor({
     setForm((current) => ({ ...current, ...patch }));
   }
 
+  // Dirty against the baseline form — blank in create mode, the saved skill in
+  // edit mode. Drives both the Save button and the parent's unsaved-changes guard,
+  // so "dirty" means the same thing in both places.
   const isDirty = useMemo(() => {
-    if (isCreate || skill === null) {
-      return true;
-    }
+    const base = toForm(skill);
 
     return (
-      form.description !== (skill.description ?? "") ||
-      form.body !== (skill.body ?? "") ||
-      form.license !== (skill.license ?? "") ||
-      form.compatibility !== (skill.compatibility ?? "") ||
-      form.metadataText !== metadataToText(skill.metadata) ||
-      !stringArraysEqual(form.allowedTools, skill.allowedTools ?? [])
+      form.name !== base.name ||
+      form.description !== base.description ||
+      form.body !== base.body ||
+      form.license !== base.license ||
+      form.compatibility !== base.compatibility ||
+      form.metadataText !== base.metadataText ||
+      !stringArraysEqual(form.allowedTools, base.allowedTools)
     );
-  }, [form, skill, isCreate]);
+  }, [form, skill]);
+
+  // Surface the dirty state up, and clear it on unmount so a freshly opened editor
+  // never inherits the previous one's guard.
+  useEffect(() => {
+    onDirtyChange(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
+
+  // Native guard for full-page exits (reload, tab close, external link) that the
+  // in-app dialog can't intercept. Only armed while there are unsaved edits.
+  useEffect(() => {
+    if (!isDirty) {
+      return;
+    }
+
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      // `preventDefault()` is the spec-compliant trigger for the browser's
+      // leave-confirmation prompt in current browsers (the legacy `returnValue`
+      // is deprecated).
+      event.preventDefault();
+    }
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isDirty]);
 
   async function handleSave() {
     const { errors: nextErrors, metadata } = validate(form, isCreate);
@@ -610,7 +1008,7 @@ function SkillEditor({
   const saveDisabled = saving || deleting || (!isCreate && !isDirty);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="skills-enter flex h-full flex-col">
       {/* Identity bar — pinned above the scrolling field stack. */}
       <div className="shrink-0 border-b border-border bg-background px-4 pt-4 pb-3 sm:px-8">
         <div className="mx-auto w-full max-w-2xl">
@@ -1111,6 +1509,20 @@ function validateResourcePathClient(path: string): string | null {
 // for its editor. Only one is ever open at a time, so reusing one input id is safe.
 type ResourceEditTarget = { kind: "add" } | { kind: "edit"; id: string } | null;
 
+function ReferenceListSkeleton() {
+  return (
+    <ul aria-hidden className="space-y-2">
+      {Array.from({ length: 2 }, (_, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: static placeholder list
+        <li className="rounded-md border border-border/80 px-3 py-2.5" key={index}>
+          <Skeleton className="h-3 w-40" />
+          <Skeleton className="mt-1.5 h-2.5 w-24" />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ReferencesSection({
   skillId,
   onChanged,
@@ -1194,13 +1606,17 @@ function ReferencesSection({
       {error ? <ErrorBanner message={error} /> : null}
 
       {loading && resources.length === 0 ? (
-        <p className="px-1 py-4 text-xs text-muted-foreground" role="status">
-          Loading references…
-        </p>
+        <ReferenceListSkeleton />
       ) : resources.length === 0 && editTarget?.kind !== "add" ? (
-        <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
-          No references yet.
-        </p>
+        <div className="rounded-md border border-dashed border-border px-4 py-6 text-center">
+          <p className="text-xs text-muted-foreground" role="status">
+            No references yet — references load on demand via{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">
+              skill_read
+            </code>
+            ; they cost nothing until the agent reads them.
+          </p>
+        </div>
       ) : (
         <ul className="space-y-2">
           {resources.map((resource) =>
@@ -1434,7 +1850,7 @@ function ResourceEditor({
   }
 
   return (
-    <div className="space-y-4 rounded-md border border-primary/40 bg-primary/[0.03] px-3 py-3">
+    <div className="skills-enter space-y-4 rounded-md border border-primary/40 bg-primary/[0.03] px-3 py-3">
       {formError ? <ErrorBanner message={formError} /> : null}
 
       <Field
