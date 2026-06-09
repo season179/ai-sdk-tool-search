@@ -24,6 +24,7 @@ import {
 import { Streamdown } from "streamdown";
 
 import { AppHeader } from "@/components/app-header";
+import { SkillMeasurementStrip } from "@/components/skill-measurement-strip";
 import { Button } from "@/components/ui/button";
 import type { Skill, SkillResource } from "@/lib/skills/skills";
 import { useMeasuredHeight } from "@/lib/use-measured-height";
@@ -448,6 +449,13 @@ function SkillEditor({
   const [enabledPending, setEnabledPending] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // References load lazily inside `ReferencesSection`; it reports their aggregate
+  // size up so the measurement strip can price the deferred references tier.
+  // `null` until the first load (or in create mode, where none exist yet).
+  const [referenceSummary, setReferenceSummary] = useState<{
+    count: number;
+    chars: number;
+  } | null>(null);
 
   function update(patch: Partial<FormState>) {
     setForm((current) => ({ ...current, ...patch }));
@@ -707,6 +715,14 @@ function SkillEditor({
         <div className="mx-auto w-full max-w-2xl space-y-8">
           {formError ? <ErrorBanner message={formError} /> : null}
 
+          <SkillMeasurementStrip
+            body={form.body}
+            description={form.description}
+            name={form.name}
+            referenceChars={referenceSummary?.chars ?? null}
+            referenceCount={referenceSummary?.count ?? null}
+          />
+
           {/* Metadata tier — always shipped to the model. */}
           <section className="space-y-4">
             <TierHeader
@@ -809,7 +825,11 @@ function SkillEditor({
                 Create the skill first, then add references to it.
               </p>
             ) : (
-              <ReferencesSection onChanged={onUpdated} skillId={skill.id} />
+              <ReferencesSection
+                onChanged={onUpdated}
+                onResourcesChange={setReferenceSummary}
+                skillId={skill.id}
+              />
             )}
           </section>
         </div>
@@ -1091,7 +1111,17 @@ function validateResourcePathClient(path: string): string | null {
 // for its editor. Only one is ever open at a time, so reusing one input id is safe.
 type ResourceEditTarget = { kind: "add" } | { kind: "edit"; id: string } | null;
 
-function ReferencesSection({ skillId, onChanged }: { skillId: string; onChanged: () => void }) {
+function ReferencesSection({
+  skillId,
+  onChanged,
+  onResourcesChange,
+}: {
+  skillId: string;
+  onChanged: () => void;
+  /** Reports the loaded references' aggregate size so the parent can price the
+      references tier in the measurement strip. Fires on every (re)load. */
+  onResourcesChange?: (summary: { count: number; chars: number }) => void;
+}) {
   const [resources, setResources] = useState<SkillResource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1113,13 +1143,17 @@ function ReferencesSection({ skillId, onChanged }: { skillId: string; onChanged:
       }
 
       setResources(data.resources);
+      onResourcesChange?.({
+        count: data.resources.length,
+        chars: data.resources.reduce((sum, resource) => sum + resource.body.length, 0),
+      });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load references.");
     } finally {
       setLoading(false);
     }
-  }, [skillId]);
+  }, [skillId, onResourcesChange]);
 
   useEffect(() => {
     void refresh();
