@@ -11,11 +11,9 @@ import {
   Search,
   Sparkles,
   Trash2,
-  X,
 } from "lucide-react";
 import {
   type CSSProperties,
-  type KeyboardEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -699,58 +697,20 @@ const FIELD_CLASS =
 type FormState = {
   name: string;
   description: string;
-  compatibility: string;
-  license: string;
-  allowedTools: string[];
-  metadataText: string;
   body: string;
 };
 
-type FieldErrors = Partial<Record<"name" | "description" | "compatibility" | "metadata", string>>;
-
-function metadataToText(metadata: Skill["metadata"]): string {
-  return metadata ? JSON.stringify(metadata, null, 2) : "";
-}
+type FieldErrors = Partial<Record<"name" | "description", string>>;
 
 function toForm(skill: Skill | null): FormState {
   return {
     name: skill?.name ?? "",
     description: skill?.description ?? "",
-    compatibility: skill?.compatibility ?? "",
-    license: skill?.license ?? "",
-    allowedTools: skill?.allowedTools ?? [],
-    metadataText: metadataToText(skill?.metadata ?? null),
     body: skill?.body ?? "",
   };
 }
 
-function parseMetadata(
-  text: string,
-): { ok: true; value: Record<string, unknown> | null } | { ok: false; error: string } {
-  const trimmed = text.trim();
-
-  if (!trimmed) {
-    return { ok: true, value: null };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return { ok: false, error: "Metadata must be valid JSON." };
-  }
-
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return { ok: false, error: "Metadata must be a JSON object." };
-  }
-
-  return { ok: true, value: parsed as Record<string, unknown> };
-}
-
-function validate(
-  form: FormState,
-  isCreate: boolean,
-): { errors: FieldErrors; metadata: Record<string, unknown> | null } {
+function validate(form: FormState, isCreate: boolean): { errors: FieldErrors } {
   const errors: FieldErrors = {};
 
   if (isCreate) {
@@ -771,20 +731,7 @@ function validate(
     errors.description = "Description must be 1024 characters or fewer.";
   }
 
-  if (form.compatibility.trim().length > 500) {
-    errors.compatibility = "Compatibility must be 500 characters or fewer.";
-  }
-
-  const metadata = parseMetadata(form.metadataText);
-  if (!metadata.ok) {
-    errors.metadata = metadata.error;
-  }
-
-  return { errors, metadata: metadata.ok ? metadata.value : null };
-}
-
-function stringArraysEqual(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
+  return { errors };
 }
 
 function SkillEditor({
@@ -838,13 +785,7 @@ function SkillEditor({
     const base = toForm(skill);
 
     return (
-      form.name !== base.name ||
-      form.description !== base.description ||
-      form.body !== base.body ||
-      form.license !== base.license ||
-      form.compatibility !== base.compatibility ||
-      form.metadataText !== base.metadataText ||
-      !stringArraysEqual(form.allowedTools, base.allowedTools)
+      form.name !== base.name || form.description !== base.description || form.body !== base.body
     );
   }, [form, skill]);
 
@@ -875,7 +816,7 @@ function SkillEditor({
   }, [isDirty]);
 
   async function handleSave() {
-    const { errors: nextErrors, metadata } = validate(form, isCreate);
+    const { errors: nextErrors } = validate(form, isCreate);
     setErrors(nextErrors);
     setFormError(null);
 
@@ -883,9 +824,6 @@ function SkillEditor({
       return;
     }
 
-    const allowedTools = form.allowedTools.length > 0 ? form.allowedTools : null;
-    const compatibility = form.compatibility.trim() || null;
-    const license = form.license.trim() || null;
     const description = form.description.trim();
 
     setSaving(true);
@@ -899,10 +837,6 @@ function SkillEditor({
             name: form.name.trim(),
             description,
             body: form.body,
-            license,
-            compatibility,
-            allowedTools,
-            metadata,
             enabled,
           }),
         });
@@ -920,10 +854,6 @@ function SkillEditor({
           body: JSON.stringify({
             description,
             body: form.body,
-            license,
-            compatibility,
-            allowedTools,
-            metadata,
           }),
         });
         const data: { skill?: Skill; error?: string } = await response.json();
@@ -933,7 +863,7 @@ function SkillEditor({
         }
 
         // Re-seed the form from the saved row so normalized values (trimmed
-        // strings, re-serialized metadata) settle the dirty state. `enabled` is
+        // strings) settle the dirty state. `enabled` is
         // intentionally left untouched: the save payload never carries it, so the
         // response echoes the pre-toggle value and would clobber an in-flight
         // toggle — the toggle owns that field.
@@ -1144,58 +1074,6 @@ function SkillEditor({
                 value={form.description}
               />
             </Field>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field
-                error={errors.compatibility}
-                hint="≤ 500 chars"
-                htmlFor="skill-compatibility"
-                label="Compatibility"
-              >
-                <input
-                  className={FIELD_CLASS}
-                  id="skill-compatibility"
-                  maxLength={500}
-                  onChange={(event) => update({ compatibility: event.target.value })}
-                  placeholder="e.g. requires Postgres 17"
-                  value={form.compatibility}
-                />
-              </Field>
-
-              <Field htmlFor="skill-license" label="License">
-                <input
-                  className={FIELD_CLASS}
-                  id="skill-license"
-                  onChange={(event) => update({ license: event.target.value })}
-                  placeholder="e.g. MIT"
-                  value={form.license}
-                />
-              </Field>
-            </div>
-
-            <Field hint="Enter or comma to add" htmlFor="skill-allowed-tools" label="Allowed tools">
-              <ChipInput
-                id="skill-allowed-tools"
-                onChange={(allowedTools) => update({ allowedTools })}
-                value={form.allowedTools}
-              />
-            </Field>
-
-            <Field
-              error={errors.metadata}
-              hint="JSON object"
-              htmlFor="skill-metadata"
-              label="Metadata"
-            >
-              <textarea
-                className={cn(FIELD_CLASS, "min-h-[6rem] resize-y font-mono")}
-                id="skill-metadata"
-                onChange={(event) => update({ metadataText: event.target.value })}
-                placeholder={'{\n  "key": "value"\n}'}
-                spellCheck={false}
-                value={form.metadataText}
-              />
-            </Field>
           </section>
 
           {/* Body tier — fetched only when the skill is invoked. */}
@@ -1332,80 +1210,6 @@ function EnabledToggle({
         )}
       />
     </button>
-  );
-}
-
-function ChipInput({
-  value,
-  onChange,
-  id,
-}: {
-  value: string[];
-  onChange: (next: string[]) => void;
-  id?: string;
-}) {
-  const [draft, setDraft] = useState("");
-
-  function commit() {
-    const tokens = draft
-      .split(",")
-      .map((token) => token.trim())
-      .filter(Boolean);
-
-    if (tokens.length === 0) {
-      setDraft("");
-      return;
-    }
-
-    const next = [...value];
-    for (const token of tokens) {
-      if (!next.includes(token)) {
-        next.push(token);
-      }
-    }
-
-    onChange(next);
-    setDraft("");
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter" || event.key === ",") {
-      event.preventDefault();
-      commit();
-    } else if (event.key === "Backspace" && draft === "" && value.length > 0) {
-      onChange(value.slice(0, -1));
-    }
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 focus-within:ring-2 focus-within:ring-primary/30">
-      {value.map((tool) => (
-        <span
-          className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-foreground"
-          key={tool}
-        >
-          {tool}
-          <button
-            aria-label={`Remove ${tool}`}
-            className="text-muted-foreground transition-colors hover:text-destructive"
-            onClick={() => onChange(value.filter((existing) => existing !== tool))}
-            type="button"
-          >
-            <X className="size-3" />
-          </button>
-        </span>
-      ))}
-      <input
-        className="min-w-[8rem] flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
-        id={id}
-        onBlur={commit}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={value.length === 0 ? "Add a tool and press Enter" : ""}
-        spellCheck={false}
-        value={draft}
-      />
-    </div>
   );
 }
 

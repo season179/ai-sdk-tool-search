@@ -15,6 +15,7 @@ import {
   isSchedulerToolName,
   schedulerToolSpecs,
 } from "@/lib/scheduler/tool-specs";
+import { buildSkillsCatalog } from "@/lib/skills/catalog";
 import {
   estimateTokensFromChars,
   type RequestTokenEstimate,
@@ -251,11 +252,10 @@ export function buildSkillsMetadata({
 }): SkillsMetadata {
   const enabledSkillCount = enabledSkills.length;
 
-  // Metadata injection: system prompt lists name + description per skill
-  const metadataChars = enabledSkills.reduce(
-    (sum, skill) => sum + (skill.name.length + skill.description.length),
-    0,
-  );
+  // Tier-1 cost: measure the exact catalog string injected into the system
+  // prompt (boilerplate + per-skill lines), not just raw name+description, so
+  // the displayed metadata cost matches what is actually sent.
+  const metadataChars = buildSkillsCatalog(enabledSkills).length;
   const metadataTokens = estimateTokensFromChars(metadataChars);
 
   // All-bodies baseline: what it would cost to inline every skill body

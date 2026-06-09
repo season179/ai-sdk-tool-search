@@ -1,6 +1,6 @@
 import { jsonSchema, type ToolSet, tool } from "ai";
 
-import { getSkillByName, getSkillResource } from "@/lib/skills/skills";
+import { getSkillByName, getSkillResource, listSkillResources } from "@/lib/skills/skills";
 import type { SkillReadTraceEvent } from "@/lib/token-usage";
 
 // --- Re-export for convenience ---------------------------------------------
@@ -14,25 +14,37 @@ type SkillReadInput = {
   path?: string;
 };
 
+// Cap the resource listing returned on activation so a skill with hundreds of
+// bundled files can't blow up the tool result; truncation is signalled back to
+// the model via `resourcesTruncated`.
+const MAX_LISTED_RESOURCES = 50;
+
 // --- Public API -------------------------------------------------------------
 
-export function createSkillTools(trace: SkillReadTraceEvent[]): ToolSet {
+/**
+ * @param trace      Accumulator the tool pushes a `skill_read` event onto per call.
+ * @param skillNames Exact names of the currently-enabled skills. When non-empty
+ *                   they constrain the `name` parameter to an enum, so the model
+ *                   cannot invoke a hallucinated skill name (spec Step 4 tip).
+ */
+export function createSkillTools(trace: SkillReadTraceEvent[], skillNames: string[] = []): ToolSet {
   return {
     skill_read: tool<SkillReadInput, ReturnType<typeof executeSkillRead>>({
       title: "Read a skill",
       description:
-        "Read a skill's full instructions by name. When called without a path, returns the skill's markdown body. When called with a path, returns the matching bundled resource (e.g. 'reference.md'). Use this after identifying a relevant skill from the skill list in the system prompt.",
+        "Read a skill's full instructions by name. Called without a path, returns the skill's markdown body plus a listing of any bundled resources (their paths). Called with a path, returns the matching bundled resource (e.g. 'reference.md'). Use this after identifying a relevant skill from the skill list in the system prompt; to read a listed resource, call again with its path.",
       inputSchema: jsonSchema<SkillReadInput>({
         type: "object",
         properties: {
           name: {
             type: "string",
             description: "Exact name of the skill to read.",
+            ...(skillNames.length > 0 ? { enum: skillNames } : {}),
           },
           path: {
             type: "string",
             description:
-              "Optional relative path of a bundled resource (e.g. 'reference.md'). Omit to read the skill body.",
+              "Optional relative path of a bundled resource (e.g. 'reference.md'), taken from the skill body's resource listing. Omit to read the skill body.",
           },
         },
         required: ["name"],
@@ -101,11 +113,29 @@ async function executeSkillRead(input: SkillReadInput) {
     };
   }
 
-  // No path: return the skill body
+  // No path: return the skill body plus a listing of bundled resources so the
+  // model can discover which paths it may load on demand (tier 3). The bodies
+  // are deliberately NOT read here — only paths/contentType — to keep activation
+  // cheap. A listing failure must not sink the body read, so degrade to none.
+  let resources: Array<{ path: string; contentType: string }> = [];
+  let resourcesTruncated = 0;
+  try {
+    const all = await listSkillResources(name);
+    resources = all
+      .slice(0, MAX_LISTED_RESOURCES)
+      .map((resource) => ({ path: resource.path, contentType: resource.contentType }));
+    resourcesTruncated = Math.max(0, all.length - resources.length);
+  } catch {
+    // Resource listing unavailable — return the body without a listing.
+  }
+
   return {
     name,
     found: true,
     body: skill.body,
     description: skill.description,
+    ...(skill.compatibility ? { compatibility: skill.compatibility } : {}),
+    ...(resources.length > 0 ? { resources } : {}),
+    ...(resourcesTruncated > 0 ? { resourcesTruncated } : {}),
   };
 }

@@ -10,7 +10,9 @@ export type Skill = {
   license: string | null;
   compatibility: string | null;
   allowedTools: string[] | null;
-  metadata: Record<string, unknown> | null;
+  // Per the Agent Skills spec, metadata is a map of string keys to string
+  // values. Untrusted inputs are checked by validateMetadata before persistence.
+  metadata: Record<string, string> | null;
   version: number;
   enabled: boolean;
   createdAt: string;
@@ -163,6 +165,31 @@ export function validateSkillInput(input: {
 
     if (input.compatibility.length > 500) {
       throw new SkillsInputError("Skill compatibility must be 500 characters or fewer.");
+    }
+  }
+}
+
+/**
+ * The Agent Skills spec defines `metadata` as a map from string keys to string
+ * values. null/undefined means "no metadata"; anything else must be a plain
+ * object whose every value is a string.
+ */
+export function validateMetadata(metadata: unknown): void {
+  if (metadata === undefined || metadata === null) {
+    return;
+  }
+
+  if (typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw new SkillsInputError(
+      "Skill metadata must be a JSON object mapping string keys to string values.",
+    );
+  }
+
+  for (const [key, value] of Object.entries(metadata)) {
+    if (typeof value !== "string") {
+      throw new SkillsInputError(
+        `Skill metadata value for '${key}' must be a string (metadata is a string-to-string map).`,
+      );
     }
   }
 }
@@ -411,11 +438,17 @@ export async function createSkill(input: {
   metadata?: Record<string, unknown> | null;
   enabled?: boolean;
 }): Promise<Skill> {
+  // Treat an empty/whitespace-only compatibility as "not provided" (null). The
+  // spec requires 1-500 chars *if provided*; coercing "" -> null keeps that
+  // invariant without rejecting a field the author simply left blank.
+  const compatibility = emptyToNull(input.compatibility);
+
   validateSkillInput({
     name: input.name,
     description: input.description,
-    compatibility: input.compatibility,
+    compatibility,
   });
+  validateMetadata(input.metadata);
 
   // Check for duplicate name
   const existing = await getPool().query(`select id from agent_skills where name = $1`, [
@@ -435,9 +468,12 @@ export async function createSkill(input: {
       input.description.trim(),
       input.body ?? "",
       input.license ?? null,
-      input.compatibility ?? null,
-      JSON.stringify(input.allowedTools ?? null),
-      JSON.stringify(input.metadata ?? null),
+      compatibility,
+      // jsonb columns: store SQL NULL when absent, not the jsonb value 'null'.
+      // JSON.stringify(null) === '"null"' would be persisted as jsonb null, which
+      // is a value (not SQL NULL) and trips the metadata string-map CHECK.
+      input.allowedTools == null ? null : JSON.stringify(input.allowedTools),
+      input.metadata == null ? null : JSON.stringify(input.metadata),
       input.enabled ?? true,
     ],
   );
@@ -460,15 +496,22 @@ export async function updateSkill(
   // Verify the skill exists
   await getSkillById(id);
 
+  // Coerce an empty/whitespace compatibility to null (see createSkill) before
+  // validating or persisting, so clearing the field is allowed but a provided
+  // value still honours the 1-500 char rule.
+  const compatibility =
+    input.compatibility !== undefined ? emptyToNull(input.compatibility) : undefined;
+
   // Validate if description/compatibility are being updated
-  if (input.description !== undefined || input.compatibility !== undefined) {
+  if (input.description !== undefined || compatibility !== undefined) {
     const current = await getSkillById(id);
     validateSkillInput({
       name: current.name,
       description: input.description ?? current.description,
-      compatibility: input.compatibility ?? current.compatibility,
+      compatibility: compatibility ?? current.compatibility,
     });
   }
+  validateMetadata(input.metadata);
 
   const sets: string[] = [];
   const values: unknown[] = [];
@@ -486,17 +529,18 @@ export async function updateSkill(
     sets.push(`license = $${idx++}`);
     values.push(input.license);
   }
-  if (input.compatibility !== undefined) {
+  if (compatibility !== undefined) {
     sets.push(`compatibility = $${idx++}`);
-    values.push(input.compatibility);
+    values.push(compatibility);
   }
   if (input.allowedTools !== undefined) {
     sets.push(`allowed_tools = $${idx++}`);
-    values.push(JSON.stringify(input.allowedTools));
+    // Store SQL NULL when clearing, not the jsonb value 'null' (see createSkill).
+    values.push(input.allowedTools == null ? null : JSON.stringify(input.allowedTools));
   }
   if (input.metadata !== undefined) {
     sets.push(`metadata = $${idx++}`);
-    values.push(JSON.stringify(input.metadata));
+    values.push(input.metadata == null ? null : JSON.stringify(input.metadata));
   }
   if (input.enabled !== undefined) {
     sets.push(`enabled = $${idx++}`);
@@ -530,6 +574,17 @@ export async function deleteSkill(id: string): Promise<Skill> {
 
 // --- Internals --------------------------------------------------------------
 
+/** Trim a value, returning null when it is absent or empty after trimming. */
+function emptyToNull(value: string | null | undefined): string | null {
+  if (value == null) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  return trimmed.length === 0 ? null : trimmed;
+}
+
 function mapSkillRow(row: SkillRow): Skill {
   return {
     id: row.id,
@@ -539,7 +594,7 @@ function mapSkillRow(row: SkillRow): Skill {
     license: row.license,
     compatibility: row.compatibility,
     allowedTools: Array.isArray(row.allowed_tools) ? row.allowed_tools : null,
-    metadata: isRecord(row.metadata) ? (row.metadata as Record<string, unknown>) : null,
+    metadata: isRecord(row.metadata) ? (row.metadata as Record<string, string>) : null,
     version: row.version,
     enabled: row.enabled,
     createdAt: row.created_at.toISOString(),

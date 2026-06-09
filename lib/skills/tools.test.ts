@@ -64,7 +64,10 @@ describe("createSkillTools", () => {
   });
 
   it("reads a skill body when no path is provided", async () => {
-    mockQuery.mockResolvedValue({ rows: [makeSkillRow()] });
+    // No-path reads also enumerate resources, so a second query is issued.
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeSkillRow()] }) // getSkillByName
+      .mockResolvedValueOnce({ rows: [] }); // listSkillResources (none)
 
     const { createSkillTools } = await import("./tools");
     const trace: SkillReadTraceEvent[] = [];
@@ -77,6 +80,90 @@ describe("createSkillTools", () => {
       body: "# Test Skill\nInstructions here",
       description: "A test skill",
     });
+  });
+
+  it("enumerates bundled resource paths (not bodies) when reading a skill body", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeSkillRow()] }) // getSkillByName
+      .mockResolvedValueOnce({
+        rows: [
+          makeResourceRow({ path: "reference.md", content_type: "text/markdown" }),
+          makeResourceRow({ id: "r2", path: "data.csv", content_type: "text/csv" }),
+        ],
+      });
+
+    const { createSkillTools } = await import("./tools");
+    const trace: SkillReadTraceEvent[] = [];
+    const tools = createSkillTools(trace);
+    const result = (await callSkillRead(tools, { name: "test-skill" })) as Record<string, unknown>;
+
+    expect(result.resources).toEqual([
+      { path: "reference.md", contentType: "text/markdown" },
+      { path: "data.csv", contentType: "text/csv" },
+    ]);
+    // The listing exposes paths only — resource bodies are loaded on demand.
+    expect(JSON.stringify(result.resources)).not.toContain("Content here");
+  });
+
+  it("surfaces compatibility when the skill declares it", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeSkillRow({ compatibility: "Requires Python 3.14+" })] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const { createSkillTools } = await import("./tools");
+    const trace: SkillReadTraceEvent[] = [];
+    const tools = createSkillTools(trace);
+    const result = (await callSkillRead(tools, { name: "test-skill" })) as Record<string, unknown>;
+
+    expect(result.compatibility).toBe("Requires Python 3.14+");
+  });
+
+  it("caps the resource listing and signals truncation", async () => {
+    const many = Array.from({ length: 60 }, (_, index) =>
+      makeResourceRow({ id: `r${index}`, path: `file-${index}.md` }),
+    );
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeSkillRow()] })
+      .mockResolvedValueOnce({ rows: many });
+
+    const { createSkillTools } = await import("./tools");
+    const trace: SkillReadTraceEvent[] = [];
+    const tools = createSkillTools(trace);
+    const result = (await callSkillRead(tools, { name: "test-skill" })) as {
+      resources: unknown[];
+      resourcesTruncated: number;
+    };
+
+    expect(result.resources).toHaveLength(50);
+    expect(result.resourcesTruncated).toBe(10);
+  });
+
+  it("constrains the name parameter to the provided skill names", async () => {
+    const { createSkillTools } = await import("./tools");
+    const trace: SkillReadTraceEvent[] = [];
+    const tools = createSkillTools(trace, ["alpha", "beta"]);
+
+    const schema = (
+      tools.skill_read as {
+        inputSchema: { jsonSchema: { properties: { name: { enum?: string[] } } } };
+      }
+    ).inputSchema.jsonSchema;
+
+    expect(schema.properties.name.enum).toEqual(["alpha", "beta"]);
+  });
+
+  it("omits the name enum when no skill names are provided", async () => {
+    const { createSkillTools } = await import("./tools");
+    const trace: SkillReadTraceEvent[] = [];
+    const tools = createSkillTools(trace);
+
+    const schema = (
+      tools.skill_read as {
+        inputSchema: { jsonSchema: { properties: { name: { enum?: string[] } } } };
+      }
+    ).inputSchema.jsonSchema;
+
+    expect(schema.properties.name.enum).toBeUndefined();
   });
 
   it("reads a skill resource when path is provided", async () => {
@@ -203,7 +290,10 @@ describe("createSkillTools", () => {
   });
 
   it("accumulates multiple trace events", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [makeSkillRow()] }).mockResolvedValueOnce({ rows: [] });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [makeSkillRow()] }) // call 1: getSkillByName
+      .mockResolvedValueOnce({ rows: [] }) // call 1: listSkillResources
+      .mockResolvedValueOnce({ rows: [] }); // call 2: getSkillByName (not found)
 
     const { createSkillTools } = await import("./tools");
     const trace: SkillReadTraceEvent[] = [];

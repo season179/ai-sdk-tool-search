@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SkillsInputError, validateSkillInput } from "./skills";
+import { SkillsInputError, validateMetadata, validateSkillInput } from "./skills";
 
 // --- Mock getPool for DB function tests ------------------------------------
 
@@ -215,6 +215,43 @@ describe("validateSkillInput", () => {
     } catch (e) {
       expect(e).toBeInstanceOf(SkillsInputError);
       expect((e as SkillsInputError).message).toContain("^[a-z0-9]+(-[a-z0-9]+)*$");
+      return;
+    }
+    expect.unreachable("Should have thrown");
+  });
+});
+
+// --- validateMetadata tests (pure, no mocks needed) ------------------------
+
+describe("validateMetadata", () => {
+  it("accepts null and undefined (no metadata)", () => {
+    expect(() => validateMetadata(null)).not.toThrow();
+    expect(() => validateMetadata(undefined)).not.toThrow();
+  });
+
+  it("accepts an empty object", () => {
+    expect(() => validateMetadata({})).not.toThrow();
+  });
+
+  it("accepts a string-to-string map", () => {
+    expect(() => validateMetadata({ author: "example-org", version: "1.0" })).not.toThrow();
+  });
+
+  it("throws when a value is not a string", () => {
+    expect(() => validateMetadata({ version: 1 })).toThrow(SkillsInputError);
+    expect(() => validateMetadata({ nested: { a: "b" } })).toThrow(SkillsInputError);
+    expect(() => validateMetadata({ flag: true })).toThrow(SkillsInputError);
+  });
+
+  it("throws when metadata is an array", () => {
+    expect(() => validateMetadata(["a", "b"])).toThrow(SkillsInputError);
+  });
+
+  it("names the offending key in the error message", () => {
+    try {
+      validateMetadata({ version: 1 });
+    } catch (e) {
+      expect((e as SkillsInputError).message).toContain("version");
       return;
     }
     expect.unreachable("Should have thrown");
@@ -685,6 +722,35 @@ describe("createSkill", () => {
     );
   });
 
+  it("rejects metadata with non-string values before touching the database", async () => {
+    const { createSkill } = await import("./skills");
+    await expect(
+      createSkill({
+        name: "test-skill",
+        description: "A test skill",
+        metadata: { version: 1 } as unknown as Record<string, string>,
+      }),
+    ).rejects.toThrow(SkillsInputError);
+
+    // Validation runs before any query (no duplicate-check, no insert).
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("accepts a string-to-string metadata map", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [makeRow({ metadata: { author: "me" } })] });
+
+    const { createSkill } = await import("./skills");
+    const skill = await createSkill({
+      name: "test-skill",
+      description: "A test skill",
+      metadata: { author: "me" },
+    });
+
+    expect(skill.metadata).toEqual({ author: "me" });
+  });
+
   it("defaults body to empty string", async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [] })
@@ -707,6 +773,20 @@ describe("createSkill", () => {
     const insertCall = mockQuery.mock.calls[1];
     // enabled is the 8th parameter (index 7)
     expect(insertCall[1][7]).toBe(true);
+  });
+
+  it("stores SQL NULL (not jsonb 'null') for absent allowed_tools and metadata", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [makeRow()] });
+
+    const { createSkill } = await import("./skills");
+    await createSkill({ name: "test-skill", description: "A test skill" });
+
+    const insertCall = mockQuery.mock.calls[1];
+    // allowed_tools (index 5) and metadata (index 6) must be JS null so node-pg
+    // sends SQL NULL — never the string "null", which becomes jsonb null and
+    // violates the agent_skills_metadata_string_map CHECK constraint.
+    expect(insertCall[1][5]).toBeNull();
+    expect(insertCall[1][6]).toBeNull();
   });
 });
 

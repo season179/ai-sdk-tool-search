@@ -26,16 +26,17 @@ describe("buildSkillsMetadata", () => {
     expect(result.trace).toEqual([]);
   });
 
-  it("computes metadata tokens from name + description", async () => {
+  it("computes metadata tokens from the injected catalog string", async () => {
     const { buildSkillsMetadata } = await import("./tool-search");
+    const { buildSkillsCatalog } = await import("./skills/catalog");
 
-    const result = buildSkillsMetadata({
-      enabledSkills: [{ name: "my-skill", description: "A test skill", body: "body content" }],
-      skillTrace: [],
-    });
+    const skill = { name: "my-skill", description: "A test skill", body: "body content" };
+    const result = buildSkillsMetadata({ enabledSkills: [skill], skillTrace: [] });
 
-    // metadata chars = "my-skill".length + "A test skill".length = 8 + 11 = 19
-    expect(result.metadataTokens).toBe(Math.max(1, Math.round(19 / 4)));
+    // Tier-1 cost measures the exact catalog text (boilerplate + per-skill line),
+    // not just raw name+description, so it matches what the route injects.
+    const expectedChars = buildSkillsCatalog([skill]).length;
+    expect(result.metadataTokens).toBe(Math.max(1, Math.round(expectedChars / 4)));
   });
 
   it("computes all-bodies baseline from skill bodies", async () => {

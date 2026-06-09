@@ -3,6 +3,7 @@ import { createAgentUIStreamResponse, smoothStream, ToolLoopAgent, type UIMessag
 
 import { mockToolCount, mockTools } from "@/lib/mock-tools";
 import { schedulerTools } from "@/lib/scheduler/tool-specs";
+import { buildSkillsCatalog } from "@/lib/skills/catalog";
 import { getEnabledSkillsResourceChars, listEnabledSkills } from "@/lib/skills/skills";
 import { createSkillTools } from "@/lib/skills/tools";
 import {
@@ -90,7 +91,16 @@ export async function POST(req: Request) {
       // DB unavailable — continue with zero skills
     }
 
-    const skillTools = createSkillTools(skillTrace);
+    // Register skill_read only when there is at least one skill to read — the
+    // spec warns against exposing a skill tool with no valid options. The
+    // enabled skill names constrain the tool's `name` enum (anti-hallucination).
+    const skillTools =
+      enabledSkills.length > 0
+        ? createSkillTools(
+            skillTrace,
+            enabledSkills.map((skill) => skill.name),
+          )
+        : {};
     const tools =
       toolExposureMode === "all"
         ? { ...mockTools, ...schedulerTools, ...skillTools }
@@ -105,11 +115,8 @@ export async function POST(req: Request) {
       // DB unavailable — baseline stays 0
     }
 
-    // Build skill metadata for system prompt injection
-    const skillInstructions =
-      enabledSkills.length > 0
-        ? `\n\nAvailable skills (use skill_read to load a skill's full instructions or resources): ${enabledSkills.map((s) => `${s.name}: ${s.description}`).join("; ")}.`
-        : "";
+    // Tier-1 catalog injected into the system prompt (empty string when no skills).
+    const skillInstructions = buildSkillsCatalog(enabledSkills);
 
     const agent = new ToolLoopAgent({
       instructions: `${SYSTEM_PROMPT} The current UTC time is ${new Date().toISOString()}.${skillInstructions}`,
