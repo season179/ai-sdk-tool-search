@@ -73,6 +73,26 @@ p {
   color: var(--foreground);
 }
 
+/* Content-swap motion: a single short fade+rise used when a pane or section
+   enters (editor opens, a reference form expands, the unsaved-changes dialog
+   appears). Deliberately one-shot — no looping, staggering, or page-load
+   choreography. The reduced-motion block below collapses the duration to
+   ~instant, so this stays accessible without per-call `motion-reduce:` guards. */
+@keyframes skills-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.skills-enter {
+  animation: skills-enter 200ms ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
