@@ -1,4 +1,8 @@
-import { SkillInputError, SkillNotFoundError } from "@/lib/skills/skills";
+import {
+  SKILLS_UNAVAILABLE_MESSAGE,
+  SkillInputError,
+  SkillNotFoundError,
+} from "@/lib/skills/skills";
 
 export function skillErrorResponse(error: unknown) {
   if (error instanceof SkillNotFoundError) {
@@ -10,8 +14,5 @@ export function skillErrorResponse(error: unknown) {
   }
 
   console.error("Skill request failed", error);
-  return Response.json(
-    { error: "Skills are unavailable. Check that Postgres is running and DATABASE_URL is set." },
-    { status: 500 },
-  );
+  return Response.json({ error: SKILLS_UNAVAILABLE_MESSAGE }, { status: 500 });
 }

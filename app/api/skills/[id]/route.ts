@@ -1,12 +1,22 @@
 import { skillErrorResponse } from "@/app/api/skills/_errors";
 import { deleteSkill, type SkillReferenceInput, updateSkill } from "@/lib/skills/skills";
+import { isUuid } from "@/lib/skills/validation";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
+/** Non-uuid ids would fail the uuid cast in Postgres; treat them as not found. */
+function invalidIdResponse(id: string) {
+  return Response.json({ error: `No skill with id '${id}' was found.` }, { status: 404 });
+}
+
 export async function PATCH(req: Request, context: RouteContext) {
   const { id } = await context.params;
+
+  if (!isUuid(id)) {
+    return invalidIdResponse(id);
+  }
 
   let body: {
     name?: string;
@@ -39,6 +49,10 @@ export async function PATCH(req: Request, context: RouteContext) {
 
 export async function DELETE(_req: Request, context: RouteContext) {
   const { id } = await context.params;
+
+  if (!isUuid(id)) {
+    return invalidIdResponse(id);
+  }
 
   try {
     await deleteSkill(id);

@@ -3164,24 +3164,27 @@ export function executeMockTool(
   };
 }
 
-export const mockTools: ToolSet = Object.fromEntries(
-  toolSpecs.map((spec) => [
-    spec.name,
-    tool<RealisticToolInput, RealisticToolOutput>({
-      title: spec.title,
-      description: spec.description,
-      inputSchema: jsonSchema<RealisticToolInput>({
-        type: "object",
-        properties: spec.properties,
-        required: spec.required,
-        additionalProperties: false,
+/** Builds real AI SDK tools from specs, routing execution through `execute`. */
+export function buildSpecToolSet(
+  specs: RealisticToolSpec[],
+  execute: (name: string, input: RealisticToolInput) => unknown,
+): ToolSet {
+  return Object.fromEntries(
+    specs.map((spec) => [
+      spec.name,
+      tool<RealisticToolInput, unknown>({
+        title: spec.title,
+        description: spec.description,
+        inputSchema: jsonSchema<RealisticToolInput>(getMockToolParameterSchema(spec)),
+        execute(input) {
+          return execute(spec.name, input);
+        },
       }),
-      execute(input) {
-        return executeMockTool(spec.name, input) as RealisticToolOutput;
-      },
-    }),
-  ]),
-);
+    ]),
+  );
+}
+
+export const mockTools: ToolSet = buildSpecToolSet(toolSpecs, executeMockTool);
 
 export const mockToolSpecs = toolSpecs;
 

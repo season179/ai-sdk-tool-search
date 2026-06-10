@@ -3,6 +3,9 @@ import { createAgentUIStreamResponse, smoothStream, ToolLoopAgent, type UIMessag
 
 import { mockToolCount, mockTools } from "@/lib/mock-tools";
 import { schedulerTools } from "@/lib/scheduler/tool-specs";
+import { formatSkillCatalog, getSkillCatalog } from "@/lib/skills/catalog";
+import { DEFAULT_AGENT_ID } from "@/lib/skills/skills";
+import { skillTools } from "@/lib/skills/tool-specs";
 import {
   type ChatMessageMetadata,
   estimateRequestTokenUsage,
@@ -25,6 +28,24 @@ const SYSTEM_PROMPT = [
   "Before creating a scheduled task, ask a follow-up question if the requested time is ambiguous (no date, no timezone, or unclear wording). One-off run_at values must be ISO 8601 with a timezone offset; recurring tasks use cron with an IANA timezone (UTC unless the user says otherwise).",
   "After creating a task, confirm whether it is one-off or recurring, when it runs, and in which timezone.",
 ].join(" ");
+
+const SKILLS_PROMPT = [
+  "You have Agent Skills stored in a database; the enabled ones are listed in <available_skills> with their database ids (ids stand in for file paths).",
+  "When a request matches a skill's description, call skill_get_content with the skill id to load its instructions before doing the work, and follow them.",
+  "A loaded skill may list reference documents in <skill_references>; load a reference with skill_get_content by its id only when the instructions call for it.",
+  "Use skill_search to find skills by description when the catalog is not enough.",
+  "When skill_search returns a reference, load its parent skill's instructions before the reference.",
+].join(" ");
+
+/** Tier-1 catalog block for the system prompt. Fails soft so chat works without the DB. */
+async function loadSkillCatalogBlock() {
+  try {
+    return formatSkillCatalog(await getSkillCatalog(DEFAULT_AGENT_ID));
+  } catch (error) {
+    console.error("Skill catalog unavailable, continuing without skills", error);
+    return "";
+  }
+}
 
 class MissingEnvironmentVariableError extends Error {
   constructor(readonly variableName: "OPENROUTER_API_KEY" | "OPENROUTER_DEFAULT_MODEL") {
@@ -76,14 +97,24 @@ export async function POST(req: Request) {
     const openrouter = createOpenRouter({ apiKey });
     const toolExposureMode = resolveToolExposureMode(process.env.TOOL_EXPOSURE_MODE);
     const toolSearchTrace: ToolSearchTraceEvent[] = [];
-    const tools =
-      toolExposureMode === "all"
-        ? { ...mockTools, ...schedulerTools }
-        : createToolSearchTools(toolSearchTrace);
     const requestEstimates: RequestTokenEstimate[] = [];
+    // Skill tools and the skills prompt ship together: both come from the same
+    // catalog load, so the model never sees tools without their context.
+    const skillCatalogBlock = await loadSkillCatalogBlock();
+    const tools = {
+      ...(toolExposureMode === "all"
+        ? { ...mockTools, ...schedulerTools }
+        : createToolSearchTools(toolSearchTrace)),
+      ...(skillCatalogBlock ? skillTools : {}),
+    };
+    const instructions = [
+      SYSTEM_PROMPT,
+      ...(skillCatalogBlock ? [SKILLS_PROMPT, skillCatalogBlock] : []),
+      `The current UTC time is ${new Date().toISOString()}.`,
+    ].join("\n\n");
 
     const agent = new ToolLoopAgent({
-      instructions: `${SYSTEM_PROMPT} The current UTC time is ${new Date().toISOString()}.`,
+      instructions,
       model: openrouter.chat(model),
       tools,
     });
@@ -121,6 +152,7 @@ export async function POST(req: Request) {
           toolSearch: buildToolSearchMetadata({
             mode: toolExposureMode,
             requestEstimates,
+            sentToolCount: Object.keys(tools).length,
             trace: toolSearchTrace,
           }),
         };

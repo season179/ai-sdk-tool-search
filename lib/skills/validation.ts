@@ -15,6 +15,13 @@ export const SKILL_BODY_MAX_LINES = 500;
 /** Lowercase alphanumeric segments separated by single hyphens. */
 const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/** Canonical 8-4-4-4-12 hex UUID, any case. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: string) {
+  return UUID_PATTERN.test(value);
+}
+
 export function countLines(value: string) {
   return value.length === 0 ? 0 : value.split("\n").length;
 }

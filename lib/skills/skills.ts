@@ -20,6 +20,10 @@ import {
  */
 export const DEFAULT_AGENT_ID = "00000000-0000-0000-0000-000000000001";
 
+/** Operator hint shown when the database is unreachable; shared by API and tool layers. */
+export const SKILLS_UNAVAILABLE_MESSAGE =
+  "Skills are unavailable. Check that Postgres is running and DATABASE_URL is set.";
+
 export type SkillReference = {
   id: string;
   name: string;
@@ -94,13 +98,13 @@ type SkillRow = {
   updated_at: Date;
 };
 
-export async function listSkills() {
+export async function listSkills(agentId: string = DEFAULT_AGENT_ID) {
   const { rows } = await getPool().query<SkillRow>(
     `select id, parent_id, type, name, description, body, is_enabled, created_at, updated_at
      from agent_skills
      where agent_id = $1 and deleted_at is null
      order by created_at asc`,
-    [DEFAULT_AGENT_ID],
+    [agentId],
   );
 
   const skills = rows
@@ -120,13 +124,13 @@ export async function listSkills() {
   return skills;
 }
 
-export async function getSkillById(id: string) {
+export async function getSkillById(id: string, agentId: string = DEFAULT_AGENT_ID) {
   const { rows } = await getPool().query<SkillRow>(
     `select id, parent_id, type, name, description, body, is_enabled, created_at, updated_at
      from agent_skills
      where agent_id = $1 and deleted_at is null and (id = $2 or parent_id = $2)
      order by created_at asc`,
-    [DEFAULT_AGENT_ID, id],
+    [agentId, id],
   );
 
   const skillRow = rows.find((row) => row.id === id && row.type === "skill");
@@ -146,16 +150,97 @@ export async function getSkillById(id: string) {
   return skill;
 }
 
-/** Loads a single live reference row by id (tier-3 resource lookup). */
-export async function getReferenceById(id: string) {
+/**
+ * Loads a single live reference row by id (tier-3 resource lookup). The parent
+ * skill must be live and enabled: disabling a skill hides its references from
+ * the agent too.
+ */
+export async function getReferenceById(id: string, agentId: string = DEFAULT_AGENT_ID) {
   const { rows } = await getPool().query<SkillRow>(
-    `select id, parent_id, type, name, description, body, is_enabled, created_at, updated_at
-     from agent_skills
-     where agent_id = $1 and id = $2 and type = 'reference' and deleted_at is null`,
-    [DEFAULT_AGENT_ID, id],
+    `select r.id, r.parent_id, r.type, r.name, r.description, r.body, r.is_enabled,
+            r.created_at, r.updated_at
+     from agent_skills r
+     join agent_skills parent
+       on parent.id = r.parent_id
+      and parent.agent_id = r.agent_id
+      and parent.deleted_at is null
+      and parent.is_enabled
+     where r.agent_id = $1 and r.id = $2 and r.type = 'reference' and r.deleted_at is null`,
+    [agentId, id],
   );
 
   return rows[0] ? mapReferenceRow(rows[0]) : null;
+}
+
+/**
+ * Narrow tier-1 projection for the agent's catalog: enabled skills only,
+ * newest first, without dragging body columns onto the chat hot path.
+ */
+export async function listSkillCatalogEntries(agentId: string = DEFAULT_AGENT_ID) {
+  const { rows } = await getPool().query<Pick<SkillRow, "id" | "name" | "description">>(
+    `select id, name, description
+     from agent_skills
+     where agent_id = $1 and type = 'skill' and is_enabled and deleted_at is null
+     order by created_at desc`,
+    [agentId],
+  );
+
+  return rows;
+}
+
+export type SkillSearchHit = {
+  id: string;
+  type: "skill" | "reference";
+  name: string;
+  description: string;
+  /** For reference hits: the id of the skill the reference belongs to. */
+  skillId: string | null;
+};
+
+/**
+ * Searches the description column of live rows for an agent. Skill hits must
+ * be enabled; reference hits must belong to an enabled skill.
+ */
+export async function searchSkillsByDescription(
+  query: string,
+  agentId: string = DEFAULT_AGENT_ID,
+  limit = 10,
+): Promise<SkillSearchHit[]> {
+  const trimmed = query.trim();
+
+  if (!trimmed) {
+    return [];
+  }
+
+  // No ESCAPE clause: Postgres' default LIKE escape character is already the
+  // backslash that escapeLikePattern emits.
+  const pattern = `%${escapeLikePattern(trimmed)}%`;
+  const { rows } = await getPool().query<
+    Pick<SkillRow, "id" | "parent_id" | "type" | "name" | "description">
+  >(
+    `select s.id, s.parent_id, s.type, s.name, s.description
+     from agent_skills s
+     left join agent_skills parent
+       on parent.id = s.parent_id and parent.agent_id = s.agent_id
+     where s.agent_id = $1
+       and s.deleted_at is null
+       and s.description ilike $2
+       and (
+         (s.type = 'skill' and s.is_enabled)
+         or (s.type = 'reference' and parent.deleted_at is null and parent.is_enabled)
+       )
+     order by (s.type = 'skill') desc, s.name asc
+     limit $3`,
+    [agentId, pattern, limit],
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    type: row.type,
+    name: row.name,
+    description: row.description,
+    skillId: row.parent_id,
+  }));
 }
 
 export async function createSkill(input: CreateSkillInput) {
@@ -295,6 +380,10 @@ export async function deleteSkill(id: string) {
 }
 
 // --- Internals ---------------------------------------------------------------
+
+function escapeLikePattern(value: string) {
+  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+}
 
 async function requireSkill(id: string) {
   const skill = await getSkillById(id);

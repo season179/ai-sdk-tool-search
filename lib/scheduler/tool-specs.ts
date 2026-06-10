@@ -1,6 +1,10 @@
-import { jsonSchema, type ToolSet, tool } from "ai";
+import type { ToolSet } from "ai";
 
-import type { RealisticToolInput, RealisticToolSpec } from "@/lib/mock-tools";
+import {
+  buildSpecToolSet,
+  type RealisticToolInput,
+  type RealisticToolSpec,
+} from "@/lib/mock-tools";
 import { ScheduledPayloadError } from "@/lib/scheduler/execute";
 import {
   cancelScheduledTask,
@@ -26,7 +30,7 @@ export const schedulerToolSpecs: RealisticToolSpec[] = [
       tool_name: {
         type: "string",
         description:
-          "Exact name of the catalog tool to execute when the task runs. Scheduler tools cannot be scheduled.",
+          "Exact name of the catalog tool to execute when the task runs. Scheduler and skill tools cannot be scheduled.",
       },
       tool_arguments: {
         type: "object",
@@ -216,24 +220,7 @@ export async function executeSchedulerTool(name: string, input: RealisticToolInp
 }
 
 /** Real AI SDK tools, used when TOOL_EXPOSURE_MODE=all exposes every tool directly. */
-export const schedulerTools: ToolSet = Object.fromEntries(
-  schedulerToolSpecs.map((spec) => [
-    spec.name,
-    tool<RealisticToolInput, Awaited<ReturnType<typeof executeSchedulerTool>>>({
-      title: spec.title,
-      description: spec.description,
-      inputSchema: jsonSchema<RealisticToolInput>({
-        type: "object",
-        properties: spec.properties,
-        required: spec.required,
-        additionalProperties: false,
-      }),
-      execute(input) {
-        return executeSchedulerTool(spec.name, input);
-      },
-    }),
-  ]),
-);
+export const schedulerTools: ToolSet = buildSpecToolSet(schedulerToolSpecs, executeSchedulerTool);
 
 function formatTask(task: ScheduledTask) {
   return {

@@ -16,6 +16,12 @@ import {
   schedulerToolSpecs,
 } from "@/lib/scheduler/tool-specs";
 import {
+  executeSkillTool,
+  getSkillToolSpec,
+  isSkillToolName,
+  skillToolSpecs,
+} from "@/lib/skills/tool-specs";
+import {
   estimateTokensFromChars,
   type RequestTokenEstimate,
   type ToolSearchMetadata,
@@ -52,12 +58,11 @@ export const TOOL_SEARCH_NAME = "tool_search";
 export const TOOL_DESCRIBE_NAME = "tool_describe";
 export const TOOL_CALL_NAME = "tool_call";
 
-const BRIDGE_TOOL_COUNT = 3;
 const DEFAULT_SEARCH_LIMIT = 5;
 const MAX_SEARCH_LIMIT = 20;
 const TOKEN_RE = /[A-Za-z0-9]+/g;
 
-const catalogToolSpecs = [...mockToolSpecs, ...schedulerToolSpecs];
+const catalogToolSpecs = [...mockToolSpecs, ...schedulerToolSpecs, ...skillToolSpecs];
 const catalog = catalogToolSpecs.map(buildCatalogEntry);
 const catalogStats = buildCatalogStats(catalog);
 const catalogSchemaChars = JSON.stringify(catalogToolSpecs.map(getMockToolFunctionSchema)).length;
@@ -65,7 +70,7 @@ const catalogSchemaChars = JSON.stringify(catalogToolSpecs.map(getMockToolFuncti
 export const catalogToolCount = catalogToolSpecs.length;
 
 function getCatalogToolSpec(name: string) {
-  return getSchedulerToolSpec(name) ?? getMockToolSpec(name);
+  return getSchedulerToolSpec(name) ?? getSkillToolSpec(name) ?? getMockToolSpec(name);
 }
 
 export function resolveToolExposureMode(value: string | undefined): ToolSearchMode {
@@ -195,10 +200,13 @@ export function searchToolCatalog(query: string, limit = DEFAULT_SEARCH_LIMIT) {
 export function buildToolSearchMetadata({
   mode,
   requestEstimates,
+  sentToolCount,
   trace,
 }: {
   mode: ToolSearchMode;
   requestEstimates: RequestTokenEstimate[];
+  /** Actual number of tools handed to the agent for this request. */
+  sentToolCount: number;
   trace: ToolSearchTraceEvent[];
 }): ToolSearchMetadata {
   const requestCount = Math.max(1, requestEstimates.length);
@@ -218,7 +226,7 @@ export function buildToolSearchMetadata({
     savedSchemaTokens: estimateTokensFromChars(savedSchemaChars),
     searchCount: trace.filter((event) => event.kind === "search").length,
     sentSchemaTokens: sentSchemaChars > 0 ? estimateTokensFromChars(sentSchemaChars) : 0,
-    sentToolCount: mode === "search" ? BRIDGE_TOOL_COUNT : catalogToolCount,
+    sentToolCount,
     trace,
   };
 }
@@ -269,7 +277,9 @@ async function callDeferredTool(input: DeferredCallInput) {
 
   const output = isSchedulerToolName(name)
     ? await executeSchedulerTool(name, toRecord(input.arguments))
-    : executeMockTool(name, toRecord(input.arguments));
+    : isSkillToolName(name)
+      ? await executeSkillTool(name, toRecord(input.arguments))
+      : executeMockTool(name, toRecord(input.arguments));
 
   if (!output) {
     return deferredToolNotFound(name);

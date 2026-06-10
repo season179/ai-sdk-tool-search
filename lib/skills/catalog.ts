@@ -1,4 +1,9 @@
-import { getReferenceById, getSkillById, listSkills } from "@/lib/skills/skills";
+import {
+  DEFAULT_AGENT_ID,
+  getReferenceById,
+  getSkillById,
+  listSkillCatalogEntries,
+} from "@/lib/skills/skills";
 
 /**
  * Progressive-disclosure helpers per the Agent Skills client guide
@@ -20,17 +25,11 @@ export type SkillCatalogEntry = {
   description: string;
 };
 
-/** Tier 1: enabled skills only — disabled skills are hidden, not blocked at activation. */
-export async function getSkillCatalog(): Promise<SkillCatalogEntry[]> {
-  const skills = await listSkills();
-
-  return skills
-    .filter((skill) => skill.isEnabled)
-    .map((skill) => ({
-      id: skill.id,
-      name: skill.name,
-      description: skill.description,
-    }));
+/** Tier 1: enabled skills only. Disabling a skill hides it here and blocks activation. */
+export async function getSkillCatalog(
+  agentId: string = DEFAULT_AGENT_ID,
+): Promise<SkillCatalogEntry[]> {
+  return listSkillCatalogEntries(agentId);
 }
 
 /** Renders the tier-1 catalog block for a system prompt or tool description. */
@@ -53,8 +52,8 @@ export function formatSkillCatalog(entries: SkillCatalogEntry[]) {
  * Tier 2: full instructions for an activated skill, with its references
  * listed (id + name + description) but not eagerly loaded.
  */
-export async function activateSkill(skillId: string) {
-  const skill = await getSkillById(skillId);
+export async function activateSkill(skillId: string, agentId: string = DEFAULT_AGENT_ID) {
+  const skill = await getSkillById(skillId, agentId);
 
   if (!skill?.isEnabled) {
     return null;
@@ -76,8 +75,8 @@ export async function activateSkill(skillId: string) {
 }
 
 /** Tier 3: a single reference document, loaded on demand by id. */
-export async function loadSkillReference(referenceId: string) {
-  const reference = await getReferenceById(referenceId);
+export async function loadSkillReference(referenceId: string, agentId: string = DEFAULT_AGENT_ID) {
+  const reference = await getReferenceById(referenceId, agentId);
 
   if (!reference) {
     return null;
