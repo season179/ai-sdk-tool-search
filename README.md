@@ -18,19 +18,19 @@ A small Next.js App Router chatbot using TypeScript, React 19, Tailwind CSS 4, A
    OPENROUTER_DEFAULT_MODEL=...
    TOOL_EXPOSURE_MODE=search
 
-   DATABASE_URL=postgres://auto_tools:auto_tools@localhost:5433/auto_tools
+   DATABASE_URL=postgres://ai_sdk_app:ai_sdk_app@localhost:5433/ai_sdk_app
    PGBOSS_SCHEMA=pgboss
    DEFAULT_SCHEDULE_TIMEZONE=UTC
    ```
 
    `OPENROUTER_DEFAULT_MODEL` is used directly as the chat model. The app intentionally fails with a clear server error if either variable is missing.
    `TOOL_EXPOSURE_MODE` is optional. `search` sends only the tool-search bridge tools; `all` sends every mock-backed tool schema for baseline comparison.
-   The `DATABASE_URL` block is only needed for scheduled tasks; the defaults match `docker-compose.yml`.
+   The `DATABASE_URL` block is only needed for scheduled tasks. Any Postgres works — the defaults match the optional `docker-compose.yml`.
 
-4. Start Postgres, run migrations, and start the scheduled-task worker (only needed for scheduled tasks):
+4. Start Postgres, run migrations, and start the scheduled-task worker (only needed for scheduled tasks). If you already run Postgres, point `DATABASE_URL` at it and skip the Docker step:
 
    ```bash
-   docker compose up -d
+   docker compose up -d  # optional: only if you don't have a local Postgres
    pnpm db:migrate
    pnpm worker:scheduled-tasks
    ```
@@ -41,7 +41,7 @@ A small Next.js App Router chatbot using TypeScript, React 19, Tailwind CSS 4, A
    pnpm dev
    ```
 
-6. Open `https://auto-tools.localhost` and send a message.
+6. Open `https://ai-sdk-app.localhost` and send a message.
 
 `pnpm dev` runs through Portless and serves the app at a stable HTTPS `.localhost` URL. Portless assigns the underlying Next.js process a random app port, so this project does not need to reserve `3000` or `3001`.
 
