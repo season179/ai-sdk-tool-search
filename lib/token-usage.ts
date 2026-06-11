@@ -102,6 +102,8 @@ export type ToolSearchMetadata = {
 };
 
 export type ChatMessageMetadata = {
+  /** Set by the composer on user messages that start with a /skill-name command. */
+  activatedSkill?: string;
   tokenUsage?: TokenUsage;
   tokenUsageBreakdown?: TokenUsageBreakdown;
   toolSearch?: ToolSearchMetadata;

@@ -2,7 +2,7 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Zap } from "lucide-react";
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -26,6 +26,8 @@ import {
 import { SiteNav } from "@/components/site-nav";
 import { TasksPanel } from "@/components/tasks-panel";
 import { Button } from "@/components/ui/button";
+import type { SkillCatalogEntry } from "@/lib/skills/catalog";
+import { parsePartialSkillCommand, parseSkillCommand } from "@/lib/skills/slash-command";
 import {
   type ChatMessageMetadata,
   formatTokenCount,
@@ -56,9 +58,30 @@ export default function ChatPage() {
   const { messages, sendMessage, status, error, stop, regenerate } = useChat<ChatMessage>({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
   });
+  const [skillCatalog, setSkillCatalog] = useState<SkillCatalogEntry[]>([]);
+  const [skillMenuDismissed, setSkillMenuDismissed] = useState(false);
+  const [activeSkillIndex, setActiveSkillIndex] = useState(0);
+  const [lastSkillQuery, setLastSkillQuery] = useState<string | null>(null);
+  const skillCatalogRequested = useRef(false);
 
   const isBusy = BUSY_STATUSES.has(status);
   const canSubmit = input.trim().length > 0 && !isBusy;
+  const skillQuery = parsePartialSkillCommand(input);
+  const skillMatches = useMemo(
+    () =>
+      skillQuery === null ? [] : skillCatalog.filter((skill) => skill.name.startsWith(skillQuery)),
+    [skillCatalog, skillQuery],
+  );
+  const isSkillMenuOpen = skillQuery !== null && skillMatches.length > 0 && !skillMenuDismissed;
+  const highlightedSkillIndex = Math.min(activeSkillIndex, Math.max(skillMatches.length - 1, 0));
+
+  // Render-time state adjustment (not an effect): a changed command resets the
+  // highlight and un-dismisses the menu.
+  if (skillQuery !== lastSkillQuery) {
+    setLastSkillQuery(skillQuery);
+    setSkillMenuDismissed(false);
+    setActiveSkillIndex(0);
+  }
   const tokenUsageSummary = useMemo(() => {
     const assistantMessages = messages.filter((message) => message.role === "assistant");
     const latestAssistantMessage = assistantMessages.at(-1);
@@ -115,6 +138,33 @@ export default function ChatPage() {
     }
   }, [focusInput, isBusy]);
 
+  // The catalog is only needed once the user starts a /command, so fetch it
+  // lazily on the first slash. Autocomplete is best-effort: commands still
+  // work without it.
+  useEffect(() => {
+    if (skillQuery === null || skillCatalogRequested.current) {
+      return;
+    }
+
+    skillCatalogRequested.current = true;
+    fetch("/api/skills/catalog")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { skills?: SkillCatalogEntry[] } | null) => {
+        if (Array.isArray(data?.skills)) {
+          setSkillCatalog(data.skills);
+        }
+      })
+      .catch(() => {});
+  }, [skillQuery]);
+
+  const acceptSkill = useCallback(
+    (name: string) => {
+      setInput(`/${name} `);
+      focusInput();
+    },
+    [focusInput],
+  );
+
   function handleSubmit(message: PromptInputMessage) {
     const text = message.text.trim();
 
@@ -123,7 +173,9 @@ export default function ChatPage() {
       return;
     }
 
-    sendMessage({ text });
+    const activatedSkill = parseSkillCommand(text);
+
+    sendMessage(activatedSkill ? { text, metadata: { activatedSkill } } : { text });
     setInput("");
   }
 
@@ -176,10 +228,20 @@ export default function ChatPage() {
               const isReasoningStreaming = message.parts.some(
                 (part) => part.type === "reasoning" && part.state === "streaming",
               );
+              const activatedSkill =
+                message.role === "user" ? message.metadata?.activatedSkill : undefined;
 
               return (
                 <Message from={message.role} key={message.id}>
                   <MessageContent from={message.role}>
+                    {activatedSkill ? (
+                      <div className="mb-1.5">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-primary-foreground/15 px-2 py-0.5 text-[11px] font-medium">
+                          <Zap aria-hidden="true" className="size-3" />
+                          {activatedSkill}
+                        </span>
+                      </div>
+                    ) : null}
                     {reasoningText ? (
                       <MessageReasoning open={isReasoningStreaming && !hasResponseText}>
                         {reasoningText}
@@ -241,23 +303,73 @@ export default function ChatPage() {
         className="fixed inset-x-0 bottom-0 z-40 bg-background/95 px-4 py-3 backdrop-blur sm:px-8 sm:py-5 lg:px-10"
         ref={composerRef}
       >
-        <PromptInput className="mx-auto w-full max-w-7xl" onSubmit={handleSubmit}>
-          <PromptInputTextarea
-            aria-label="Message"
-            disabled={isBusy}
-            ref={inputRef}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-            }}
-            onChange={(event) => setInput(event.currentTarget.value)}
-            placeholder="Send a message..."
-            value={input}
-          />
-          <PromptInputSubmit disabled={!canSubmit} onStop={stop} status={status} />
-        </PromptInput>
+        <div className="relative mx-auto w-full max-w-7xl">
+          {isSkillMenuOpen ? (
+            <div
+              aria-label="Skills"
+              className="absolute bottom-full left-0 z-50 mb-2 max-h-64 w-full max-w-md overflow-y-auto rounded-lg border border-border bg-background py-1 shadow-lg"
+              role="listbox"
+            >
+              {skillMatches.map((skill, index) => (
+                <button
+                  aria-selected={index === highlightedSkillIndex}
+                  className={`flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm ${
+                    index === highlightedSkillIndex ? "bg-muted" : "hover:bg-muted/60"
+                  }`}
+                  key={skill.id}
+                  onClick={() => acceptSkill(skill.name)}
+                  role="option"
+                  type="button"
+                >
+                  <span className="shrink-0 font-medium text-foreground">/{skill.name}</span>
+                  <span className="min-w-0 truncate text-xs text-muted-foreground">
+                    {skill.description}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <PromptInput onSubmit={handleSubmit}>
+            <PromptInputTextarea
+              aria-label="Message"
+              disabled={isBusy}
+              ref={inputRef}
+              onKeyDown={(event) => {
+                if (isSkillMenuOpen) {
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    const delta = event.key === "ArrowDown" ? 1 : -1;
+                    setActiveSkillIndex(
+                      (highlightedSkillIndex + delta + skillMatches.length) % skillMatches.length,
+                    );
+                    return;
+                  }
+
+                  if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+                    event.preventDefault();
+                    acceptSkill(skillMatches[highlightedSkillIndex].name);
+                    return;
+                  }
+
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setSkillMenuDismissed(true);
+                    return;
+                  }
+                }
+
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              onChange={(event) => setInput(event.currentTarget.value)}
+              placeholder="Send a message... (/skill-name to activate a skill)"
+              value={input}
+            />
+            <PromptInputSubmit disabled={!canSubmit} onStop={stop} status={status} />
+          </PromptInput>
+        </div>
       </div>
     </main>
   );

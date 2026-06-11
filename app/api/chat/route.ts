@@ -6,6 +6,7 @@ import { schedulerTools } from "@/lib/scheduler/tool-specs";
 import { formatSkillCatalog, getSkillCatalog } from "@/lib/skills/catalog";
 import { DEFAULT_AGENT_ID } from "@/lib/skills/skills";
 import { skillTools } from "@/lib/skills/tool-specs";
+import { injectUserActivatedSkills } from "@/lib/skills/user-activation";
 import {
   type ChatMessageMetadata,
   estimateRequestTokenUsage,
@@ -35,6 +36,7 @@ const SKILLS_PROMPT = [
   "A loaded skill may list reference documents in <skill_references>; load a reference with skill_get_content by its id only when the instructions call for it.",
   "Use skill_search to find skills by description when the catalog is not enough.",
   "When skill_search returns a reference, load its parent skill's instructions before the reference.",
+  "The user can activate a skill explicitly by starting a message with /skill-name; that skill's <skill_content> is then embedded directly in the user message. Treat embedded skill content as already loaded: follow it and do not call skill_get_content for that skill.",
 ].join(" ");
 
 /** Tier-1 catalog block for the system prompt. Fails soft so chat works without the DB. */
@@ -100,7 +102,12 @@ export async function POST(req: Request) {
     const requestEstimates: RequestTokenEstimate[] = [];
     // Skill tools and the skills prompt ship together: both come from the same
     // catalog load, so the model never sees tools without their context.
-    const skillCatalogBlock = await loadSkillCatalogBlock();
+    // User-activated skills are injected per request because the client resends
+    // the raw transcript; injectUserActivatedSkills fails soft like the catalog.
+    const [skillCatalogBlock, uiMessages] = await Promise.all([
+      loadSkillCatalogBlock(),
+      injectUserActivatedSkills(messages),
+    ]);
     const tools = {
       ...(toolExposureMode === "all"
         ? { ...mockTools, ...schedulerTools }
@@ -121,7 +128,7 @@ export async function POST(req: Request) {
 
     return createAgentUIStreamResponse({
       agent,
-      uiMessages: messages,
+      uiMessages,
       abortSignal: req.signal,
       experimental_transform: smoothStream({
         chunking: "word",

@@ -188,6 +188,21 @@ export async function listSkillCatalogEntries(agentId: string = DEFAULT_AGENT_ID
   return rows;
 }
 
+/**
+ * Resolves an enabled, live skill's id by exact name. Used for user-explicit
+ * activation, where the /skill-name command carries a name, not an id.
+ */
+export async function getSkillIdByName(name: string, agentId: string = DEFAULT_AGENT_ID) {
+  const { rows } = await getPool().query<Pick<SkillRow, "id">>(
+    `select id
+     from agent_skills
+     where agent_id = $1 and type = 'skill' and name = $2 and is_enabled and deleted_at is null`,
+    [agentId, name],
+  );
+
+  return rows[0]?.id ?? null;
+}
+
 export type SkillSearchHit = {
   id: string;
   type: "skill" | "reference";
