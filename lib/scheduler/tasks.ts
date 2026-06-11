@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 
-import { getBoss, TASK_QUEUE_NAME } from "@/lib/scheduler/boss";
+import { CronExpressionParser } from "cron-parser";
+
+import {
+  getBoss,
+  TASK_QUEUE_NAME,
+  taskScheduleOptions,
+  taskSendOptions,
+} from "@/lib/scheduler/boss";
 import { getPool } from "@/lib/scheduler/db";
 import { getDefaultScheduleTimezone } from "@/lib/scheduler/env";
 import { parseScheduledTaskPayload, type ScheduledTaskPayload } from "@/lib/scheduler/execute";
@@ -108,7 +115,12 @@ export async function createScheduledTask(input: CreateScheduledTaskInput) {
     );
 
     try {
-      const jobId = await boss.sendAfter(TASK_QUEUE_NAME, { taskId: id }, null, runAt);
+      const jobId = await boss.sendAfter(
+        TASK_QUEUE_NAME,
+        { taskId: id },
+        taskSendOptions(id),
+        runAt,
+      );
 
       if (!jobId) {
         throw new Error("pg-boss did not return a job id for the scheduled task.");
@@ -130,6 +142,7 @@ export async function createScheduledTask(input: CreateScheduledTaskInput) {
     }
 
     const timezone = parseTimezone(input.timezone);
+    parseCron(cron, timezone);
 
     await pool.query(
       `insert into agent_scheduled_tasks
@@ -139,14 +152,9 @@ export async function createScheduledTask(input: CreateScheduledTaskInput) {
     );
 
     try {
-      await boss.schedule(TASK_QUEUE_NAME, cron, { taskId: id }, { key: id, tz: timezone });
+      await boss.schedule(TASK_QUEUE_NAME, cron, { taskId: id }, taskScheduleOptions(id, timezone));
     } catch (error) {
       await pool.query("delete from agent_scheduled_tasks where id = $1", [id]);
-
-      if (error instanceof Error && /cron/i.test(error.message)) {
-        throw new SchedulerInputError(`Invalid cron expression '${cron}': ${error.message}`);
-      }
-
       throw error;
     }
   } else {
@@ -203,7 +211,12 @@ export async function resumeScheduledTask(id: string) {
       throw new SchedulerInputError("This recurring task has no cron expression.");
     }
 
-    await boss.schedule(TASK_QUEUE_NAME, task.cron, { taskId: id }, { key: id, tz: task.timezone });
+    await boss.schedule(
+      TASK_QUEUE_NAME,
+      task.cron,
+      { taskId: id },
+      taskScheduleOptions(id, task.timezone),
+    );
     await updateTaskStatus(id, "active");
   } else {
     const runAt = task.runAt ? new Date(task.runAt) : null;
@@ -215,7 +228,7 @@ export async function resumeScheduledTask(id: string) {
     }
 
     // Pausing cancelled the original job, so resume sends a fresh one.
-    const jobId = await boss.sendAfter(TASK_QUEUE_NAME, { taskId: id }, null, runAt);
+    const jobId = await boss.sendAfter(TASK_QUEUE_NAME, { taskId: id }, taskSendOptions(id), runAt);
 
     if (!jobId) {
       throw new Error("pg-boss did not return a job id while resuming the task.");
@@ -391,6 +404,17 @@ function parseRunAt(value: string | undefined) {
   }
 
   return runAt;
+}
+
+function parseCron(cron: string, timezone: string) {
+  try {
+    // Same parser and options pg-boss validates with, so anything accepted
+    // here is also accepted by boss.schedule and the catch-up reconciler.
+    CronExpressionParser.parse(cron, { tz: timezone });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new SchedulerInputError(`Invalid cron expression '${cron}': ${message}`);
+  }
 }
 
 function parseTimezone(value: string | undefined) {

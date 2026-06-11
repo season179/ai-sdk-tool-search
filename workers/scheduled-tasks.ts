@@ -3,6 +3,7 @@ import "@/lib/scheduler/load-env";
 import type { Job } from "pg-boss";
 
 import { getBoss, stopBoss, TASK_QUEUE_NAME } from "@/lib/scheduler/boss";
+import { recoverMissedCronRuns } from "@/lib/scheduler/catchup";
 import { closePool } from "@/lib/scheduler/db";
 import { executeScheduledTaskPayload } from "@/lib/scheduler/execute";
 import {
@@ -60,6 +61,18 @@ async function processJob(job: Job<TaskJobData>) {
 
 async function main() {
   const boss = await getBoss();
+
+  // Catch-up is best-effort: run it alongside the worker so a bad task row
+  // or a flaky database can never block or crashloop job consumption.
+  void recoverMissedCronRuns()
+    .then((recovered) => {
+      if (recovered > 0) {
+        console.log(`Queued ${recovered} catch-up run(s) for cron fires missed while down.`);
+      }
+    })
+    .catch((error) => {
+      console.error("Missed-run catch-up failed; worker continues without it", error);
+    });
 
   await boss.work<TaskJobData>(TASK_QUEUE_NAME, { pollingIntervalSeconds: 2 }, async (jobs) => {
     for (const job of jobs) {

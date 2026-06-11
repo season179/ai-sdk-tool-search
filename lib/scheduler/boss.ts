@@ -5,6 +5,21 @@ import { getPgBossSchema, requireDatabaseUrl } from "@/lib/scheduler/env";
 export const TASK_QUEUE_NAME = "agent-task-run";
 export const TASK_DLQ_NAME = "agent-task-run-dlq";
 
+/**
+ * Every job on the task queue must carry the task id as its singleton key.
+ * The queue's 'stately' policy keeps at most one queued job per key, which
+ * coalesces cron fires that stack up while no worker is consuming — and it
+ * limits keyless jobs to one per queue, so a send without the key would make
+ * unrelated tasks' jobs silently swallow each other.
+ */
+export function taskSendOptions(taskId: string) {
+  return { singletonKey: taskId };
+}
+
+export function taskScheduleOptions(taskId: string, timezone: string) {
+  return { key: taskId, tz: timezone, ...taskSendOptions(taskId) };
+}
+
 type BossGlobal = {
   __schedulerBoss?: {
     boss: PgBoss;
@@ -35,9 +50,13 @@ async function startAndPrepare(boss: PgBoss) {
   await boss.createQueue(TASK_DLQ_NAME, {
     retentionSeconds: 14 * 24 * 60 * 60,
   });
+  // Queues created before this option existed keep 'standard' (createQueue
+  // is ON CONFLICT DO NOTHING); the worker's catch-up reconciler migrates
+  // them once their schedules carry singleton keys.
   await boss.createQueue(TASK_QUEUE_NAME, {
     deadLetter: TASK_DLQ_NAME,
     expireInSeconds: 5 * 60,
+    policy: "stately",
     retryBackoff: true,
     retryDelay: 5,
     retryLimit: 2,
@@ -57,8 +76,16 @@ export function getBoss(): Promise<PgBoss> {
     const boss = createBoss();
     globalForBoss.__schedulerBoss = {
       boss,
-      started: startAndPrepare(boss).catch((error) => {
-        globalForBoss.__schedulerBoss = undefined;
+      started: startAndPrepare(boss).catch(async (error) => {
+        // boss.start() may have succeeded before a later step failed; stop
+        // this instance so its pool and timers don't leak, and only clear
+        // the cache slot if it still belongs to this instance.
+        await boss.stop({ graceful: false }).catch(() => undefined);
+
+        if (globalForBoss.__schedulerBoss?.boss === boss) {
+          globalForBoss.__schedulerBoss = undefined;
+        }
+
         throw error;
       }),
     };

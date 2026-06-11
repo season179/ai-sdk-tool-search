@@ -245,3 +245,11 @@ Use `agent-browser` for browser verification:
 - The chat system prompt includes the current UTC time per request; without it the model cannot resolve relative times like "in 20 seconds".
 - Reusing one SQL parameter for the uuid `id` and text `schedule_key` columns fails with `42P08 inconsistent types deduced` — the insert passes the id as two parameters.
 - Scheduler tool errors return `{ success: false, error }` to the model instead of throwing, so the agent can recover (observed live: it retried with a later `run_at` after a "runAt must be in the future" rejection).
+
+## Missed-run coalescing (added 2026-06-11)
+
+Downtime handling is launchd-style: each cron task runs at most once on recovery, however long the outage. The recipe above predates this — the queue and call conventions changed:
+
+- The task queue uses pg-boss's `stately` policy, and **every send or schedule must carry the task id as its singleton key** via `taskSendOptions` / `taskScheduleOptions` from `lib/scheduler/boss.ts`. Under `stately`, keyless jobs share one queue-wide slot, so a bare `send`/`schedule` silently swallows other tasks' jobs.
+- Stacked fires (worker down, web up) coalesce into one queued job at insert time. Full-outage misses are recovered by `lib/scheduler/catchup.ts` at worker startup: it re-asserts schedules, migrates pre-`stately` queues (createQueue can't change an existing policy), and queues at most one catch-up run per task — judged on the database clock against the latest run / task update.
+- Accepted trade-offs: a job failing while an earlier same-key job still sits in `retry` goes straight to the DLQ (the retry slot is occupied — see pg-boss `failJobs`' `ON CONFLICT DO NOTHING`); jobs queued before the one-time policy flip are exempt from coalescing during that upgrade window.

@@ -84,5 +84,6 @@ The agent has six real (pg-boss-backed) scheduler tools in the same catalog: `sc
 - Architecture and decisions: `docs/pg-boss-scheduled-tasks-plan.md`
 - App state lives in `agent_scheduled_tasks` / `agent_scheduled_task_runs`; pg-boss owns queue state in the `pgboss` schema.
 - The worker (`pnpm worker:scheduled-tasks`) must be running for tasks to execute. Failed runs retry twice with backoff, then land in the `agent-task-run-dlq` queue.
+- Downtime is handled launchd-style: cron fires that stack up while no worker is consuming coalesce into a single queued job (`stately` queue policy + per-task singleton keys), and at startup the worker queues one catch-up run for any cron fire missed during a full outage (`lib/scheduler/catchup.ts`). However long the gap, each task catches up at most once. One-off tasks keep their queued job and simply run on recovery.
 - The header Tasks panel and `GET/POST /api/scheduled-tasks`, `PATCH/DELETE /api/scheduled-tasks/:id`, `GET /api/scheduled-tasks/:id/runs` use the same service as the chat tools.
 - `scripts/smoke-scheduler.ts` is a quick end-to-end check (requires Postgres and the worker).
