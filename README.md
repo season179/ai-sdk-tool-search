@@ -18,7 +18,7 @@ A small Next.js App Router chatbot using TypeScript, React 19, Tailwind CSS 4, A
    OPENROUTER_DEFAULT_MODEL=...
    TOOL_EXPOSURE_MODE=search
 
-   DATABASE_URL=postgres://auto_tools:auto_tools@localhost:5433/auto_tools
+   DATABASE_URL=postgres://ai_sdk_app:ai_sdk_app@localhost:5433/ai_sdk_app
    PGBOSS_SCHEMA=pgboss
    DEFAULT_SCHEDULE_TIMEZONE=UTC
    ```
@@ -41,7 +41,7 @@ A small Next.js App Router chatbot using TypeScript, React 19, Tailwind CSS 4, A
    pnpm dev
    ```
 
-6. Open `https://auto-tools.localhost` and send a message.
+6. Open `https://ai-sdk-app.localhost` and send a message.
 
 `pnpm dev` runs through Portless and serves the app at a stable HTTPS `.localhost` URL. Portless assigns the underlying Next.js process a random app port, so this project does not need to reserve `3000` or `3001`.
 
