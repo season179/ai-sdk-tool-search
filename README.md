@@ -1,6 +1,22 @@
-# OpenRouter Streaming Chat
+# ai-sdk-app
 
-A small Next.js App Router chatbot using TypeScript, React 19, Tailwind CSS 4, AI Elements-style components, and the Vercel AI SDK with OpenRouter.
+A sandbox for the [Vercel AI SDK](https://ai-sdk.dev). I run production apps with real users on the AI SDK, and the framework moves fast — I started on v4, v6 is current, and v7 is on the way. Breaking changes and new agent patterns can't be trialled on production users, so they get proven out here first and then ported over to the real apps.
+
+The app itself is a small Next.js App Router chat: TypeScript, React 19, Tailwind CSS 4, AI Elements-style components, and AI SDK v6 with OpenRouter.
+
+## Experiments
+
+### Tool search
+
+Inspired by [tool search in Nous Research's Hermes agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/tool-search). Instead of sending the model every tool schema up front, the chat agent gets a compact tool-search bridge: a local BM25 index over a catalog of 200 partially-real, mock-backed tools, which the model queries to discover and load only the tools a task actually needs. Set `TOOL_EXPOSURE_MODE=all` to send every schema instead, as a baseline for comparing token usage.
+
+### Agent skills in Postgres
+
+Agent skills are conventionally files on disk. That doesn't translate well to my production setup — dockerised apps on Kubernetes, where depending on a writable, persistent filesystem per pod is exactly what I want to avoid. The experiment here stores skills in Postgres instead: the chat runtime loads skills from the database, and there's a management UI at `/skills` with a detail editor, a references tier, and per-skill token measurement.
+
+### Scheduled tasks
+
+Real (non-mock) scheduler tools backed by pg-boss, in the same catalog the tool search exposes. See [Scheduled Tasks](#scheduled-tasks) below for details.
 
 ## Setup
 
@@ -25,9 +41,9 @@ A small Next.js App Router chatbot using TypeScript, React 19, Tailwind CSS 4, A
 
    `OPENROUTER_DEFAULT_MODEL` is used directly as the chat model. The app intentionally fails with a clear server error if either variable is missing.
    `TOOL_EXPOSURE_MODE` is optional. `search` sends only the tool-search bridge tools; `all` sends every mock-backed tool schema for baseline comparison.
-   The `DATABASE_URL` block is only needed for scheduled tasks. Any Postgres works — the defaults match the optional `docker-compose.yml`.
+   The `DATABASE_URL` block is only needed for scheduled tasks and skills. Any Postgres works — the defaults match the optional `docker-compose.yml`.
 
-4. Start Postgres, run migrations, and start the scheduled-task worker (only needed for scheduled tasks). If you already run Postgres, point `DATABASE_URL` at it and skip the Docker step:
+4. Start Postgres, run migrations, and start the scheduled-task worker (only needed for scheduled tasks and skills). If you already run Postgres, point `DATABASE_URL` at it and skip the Docker step:
 
    ```bash
    docker compose up -d  # optional: only if you don't have a local Postgres
