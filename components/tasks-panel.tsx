@@ -4,6 +4,7 @@ import { CalendarClock, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { extractStatusUpdate, formatTimestamp } from "@/lib/scheduler/display";
 import type { ScheduledTask } from "@/lib/scheduler/tasks";
 
 const REFRESH_INTERVAL_MS = 10_000;
@@ -193,7 +194,9 @@ function TaskCard({
           ? `${task.lastRun.status} ${formatTimestamp(task.lastRun.startedAt)}`
           : "never"}
         {task.lastRun?.error ? ` — ${task.lastRun.error}` : ""}
-        {getLastRunStatusUpdate(task) ? ` — ${getLastRunStatusUpdate(task)}` : ""}
+        {extractStatusUpdate(task.lastRun?.output)
+          ? ` — ${extractStatusUpdate(task.lastRun?.output)}`
+          : ""}
       </p>
 
       {canCancel ? (
@@ -235,21 +238,6 @@ function TaskCard({
   );
 }
 
-/** Instruction runs store their verdict as run output; surface its statusUpdate. */
-function getLastRunStatusUpdate(task: ScheduledTask) {
-  const output = task.lastRun?.output;
-
-  if (output && typeof output === "object" && "statusUpdate" in output) {
-    const update = (output as { statusUpdate?: unknown }).statusUpdate;
-
-    if (typeof update === "string" && update.trim()) {
-      return update;
-    }
-  }
-
-  return null;
-}
-
 function getStatusClasses(status: ScheduledTask["status"]) {
   switch (status) {
     case "active":
@@ -261,20 +249,4 @@ function getStatusClasses(status: ScheduledTask["status"]) {
     case "cancelled":
       return "bg-muted text-muted-foreground";
   }
-}
-
-function formatTimestamp(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
 }
