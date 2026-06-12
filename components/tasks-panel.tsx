@@ -84,7 +84,7 @@ export function TasksPanel() {
 
   return (
     <details className="relative shrink-0" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="block cursor-pointer list-none rounded-md px-2 py-1 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-primary/30 [&::-webkit-details-marker]:hidden">
+      <summary className="block cursor-pointer list-none rounded-md px-2 py-0.5 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-primary/30 [&::-webkit-details-marker]:hidden">
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <CalendarClock className="size-3.5" />
           Tasks

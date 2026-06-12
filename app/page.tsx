@@ -185,7 +185,7 @@ export default function ChatPage() {
       style={shellStyle}
     >
       <header
-        className="fixed inset-x-0 top-0 z-30 bg-background/95 px-4 py-3 backdrop-blur sm:px-8 sm:py-4 lg:px-10"
+        className="sticky top-0 z-30 bg-background/95 px-4 py-3 backdrop-blur sm:px-8 sm:py-4 lg:px-10"
         ref={headerRef}
       >
         <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -197,7 +197,6 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <SiteNav />
             <TasksPanel />
             <TokenUsageMenu
               latestBreakdown={tokenUsageSummary.latestBreakdown}
@@ -205,6 +204,7 @@ export default function ChatPage() {
               latestUsage={tokenUsageSummary.latestUsage}
               sessionUsage={tokenUsageSummary.sessionUsage}
             />
+            <SiteNav />
           </div>
         </div>
       </header>
@@ -414,7 +414,7 @@ function TokenUsageMenu({
 }) {
   return (
     <details className="relative shrink-0 text-right">
-      <summary className="-mr-2 block cursor-pointer list-none rounded-md px-2 py-1 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-primary/30 [&::-webkit-details-marker]:hidden">
+      <summary className="-mr-2 block cursor-pointer list-none rounded-md px-2 py-0.5 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-primary/30 [&::-webkit-details-marker]:hidden">
         <span className="block text-xs text-muted-foreground">Session tokens</span>
         <span className="block tabular-nums text-sm font-semibold text-foreground">
           {formatTokenCount(sessionUsage.totalTokens)}

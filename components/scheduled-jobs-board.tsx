@@ -72,7 +72,6 @@ export function ScheduledJobsBoard() {
             </div>
           </div>
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <SiteNav />
             <Button
               aria-label="Refresh scheduled jobs"
               disabled={state.loading}
@@ -86,6 +85,7 @@ export function ScheduledJobsBoard() {
                 className={`size-3.5 ${state.loading ? "animate-spin" : ""}`}
               />
             </Button>
+            <SiteNav />
           </div>
         </div>
       </header>

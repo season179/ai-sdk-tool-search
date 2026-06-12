@@ -245,11 +245,11 @@ export default function SkillsPage() {
             </div>
           </div>
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <SiteNav />
             <Button onClick={openCreate} size="sm" type="button">
               <Plus aria-hidden="true" className="size-3.5" />
               New skill
             </Button>
+            <SiteNav />
           </div>
         </div>
       </header>
