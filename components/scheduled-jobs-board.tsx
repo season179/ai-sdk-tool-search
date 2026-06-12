@@ -4,7 +4,7 @@ import { AlertCircle, CalendarClock, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { SiteNav } from "@/components/site-nav";
+import { SiteHeader, SiteHeaderStatus } from "@/components/site-header";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { extractStatusUpdate, formatTimestamp } from "@/lib/scheduler/display";
 import type {
@@ -62,33 +62,27 @@ export function ScheduledJobsBoard() {
 
   return (
     <main className="min-h-dvh bg-background">
-      <header className="sticky top-0 z-30 bg-background/95 px-4 py-3 backdrop-blur sm:px-8 sm:py-4 lg:px-10">
-        <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-foreground">Scheduled tasks</p>
-            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-              <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
-              <span>Live · refreshes every {REFRESH_INTERVAL_MS / 1000}s</span>
-            </div>
-          </div>
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <Button
-              aria-label="Refresh scheduled jobs"
-              disabled={state.loading}
-              onClick={() => void refresh()}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              <RefreshCw
-                aria-hidden="true"
-                className={`size-3.5 ${state.loading ? "animate-spin" : ""}`}
-              />
-            </Button>
-            <SiteNav />
-          </div>
-        </div>
-      </header>
+      <h1 className="sr-only">Scheduled tasks</h1>
+      <SiteHeader
+        actions={
+          <Button
+            aria-label="Refresh scheduled jobs"
+            disabled={state.loading}
+            onClick={() => void refresh()}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            <RefreshCw
+              aria-hidden="true"
+              className={`size-3.5 ${state.loading ? "animate-spin" : ""}`}
+            />
+          </Button>
+        }
+        status={
+          <SiteHeaderStatus>Live · refreshes every {REFRESH_INTERVAL_MS / 1000}s</SiteHeaderStatus>
+        }
+      />
 
       <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-8 lg:px-10 lg:py-8">
         {state.error ? (

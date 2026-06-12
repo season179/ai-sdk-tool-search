@@ -23,7 +23,7 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
-import { SiteNav } from "@/components/site-nav";
+import { SiteHeader, SiteHeaderStatus } from "@/components/site-header";
 import { TasksPanel } from "@/components/tasks-panel";
 import { Button } from "@/components/ui/button";
 import type { SkillCatalogEntry } from "@/lib/skills/catalog";
@@ -181,22 +181,13 @@ export default function ChatPage() {
 
   return (
     <main
-      className="h-dvh overflow-hidden bg-background [--composer-height:8.75rem] [--header-height:4.5rem] sm:[--composer-height:10.125rem]"
+      className="h-dvh overflow-hidden bg-background [--composer-height:8.75rem] [--header-height:3.5rem] sm:[--composer-height:10.125rem]"
       style={shellStyle}
     >
-      <header
-        className="sticky top-0 z-30 bg-background/95 px-4 py-3 backdrop-blur sm:px-8 sm:py-4 lg:px-10"
-        ref={headerRef}
-      >
-        <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-foreground">OpenRouter Chat</p>
-            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-              <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
-              <span>{isBusy ? "Responding" : "Ready"}</span>
-            </div>
-          </div>
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+      <h1 className="sr-only">OpenRouter Chat</h1>
+      <SiteHeader
+        actions={
+          <>
             <TasksPanel />
             <TokenUsageMenu
               latestBreakdown={tokenUsageSummary.latestBreakdown}
@@ -204,10 +195,13 @@ export default function ChatPage() {
               latestUsage={tokenUsageSummary.latestUsage}
               sessionUsage={tokenUsageSummary.sessionUsage}
             />
-            <SiteNav />
-          </div>
-        </div>
-      </header>
+          </>
+        }
+        ref={headerRef}
+        status={
+          <SiteHeaderStatus pulse={isBusy}>{isBusy ? "Responding" : "Ready"}</SiteHeaderStatus>
+        }
+      />
 
       <Conversation className="fixed inset-x-0 bottom-[var(--composer-height)] top-[var(--header-height)] px-4 sm:px-8 lg:px-10">
         <ConversationContent className="mx-auto w-full max-w-7xl py-6 sm:py-10" ref={contentRef}>
@@ -413,10 +407,10 @@ function TokenUsageMenu({
   sessionUsage: TokenUsage;
 }) {
   return (
-    <details className="relative shrink-0 text-right">
-      <summary className="-mr-2 block cursor-pointer list-none rounded-md px-2 py-0.5 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-primary/30 [&::-webkit-details-marker]:hidden">
-        <span className="block text-xs text-muted-foreground">Session tokens</span>
-        <span className="block tabular-nums text-sm font-semibold text-foreground">
+    <details className="relative shrink-0">
+      <summary className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-primary/30 [&::-webkit-details-marker]:hidden">
+        Session tokens
+        <span className="font-semibold tabular-nums text-foreground">
           {formatTokenCount(sessionUsage.totalTokens)}
         </span>
       </summary>

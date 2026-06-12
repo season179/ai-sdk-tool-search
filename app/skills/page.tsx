@@ -4,7 +4,7 @@ import { AlertCircle, BookOpen, Copy, FileText, Plus, Trash2, X } from "lucide-r
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 
-import { SiteNav } from "@/components/site-nav";
+import { SiteHeader, SiteHeaderStatus } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import {
   countLines,
@@ -235,24 +235,20 @@ export default function SkillsPage() {
 
   return (
     <main className="min-h-dvh bg-background">
-      <header className="sticky top-0 z-30 bg-background/95 px-4 py-3 backdrop-blur sm:px-8 sm:py-4 lg:px-10">
-        <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-foreground">Skills</p>
-            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-              <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
-              <span>{skills === null ? "Loading" : `${enabledCount} enabled`}</span>
-            </div>
-          </div>
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <Button onClick={openCreate} size="sm" type="button">
-              <Plus aria-hidden="true" className="size-3.5" />
-              New skill
-            </Button>
-            <SiteNav />
-          </div>
-        </div>
-      </header>
+      <h1 className="sr-only">Skills</h1>
+      <SiteHeader
+        actions={
+          <Button onClick={openCreate} size="sm" type="button">
+            <Plus aria-hidden="true" className="size-3.5" />
+            New skill
+          </Button>
+        }
+        status={
+          <SiteHeaderStatus>
+            {skills === null ? "Loading" : `${enabledCount} of ${skills.length} enabled`}
+          </SiteHeaderStatus>
+        }
+      />
 
       <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-8 lg:px-10 lg:py-8">
         {loadError ? (
@@ -294,7 +290,7 @@ export default function SkillsPage() {
           </div>
         ) : (
           <div className="lg:grid lg:grid-cols-[minmax(16rem,21rem)_minmax(0,1fr)] lg:items-start lg:gap-10">
-            <aside className="lg:sticky lg:top-26">
+            <aside className="lg:sticky lg:top-20">
               <p className="px-3 text-xs text-muted-foreground">
                 {skills.length} skill{skills.length === 1 ? "" : "s"}
               </p>
@@ -341,7 +337,7 @@ export default function SkillsPage() {
               </ul>
             </aside>
 
-            <div className="mt-8 min-w-0 scroll-mt-40 sm:scroll-mt-24 lg:mt-0" ref={detailRef}>
+            <div className="mt-8 min-w-0 scroll-mt-32 sm:scroll-mt-20 lg:mt-0" ref={detailRef}>
               {editorMode !== "closed" ? (
                 <SkillEditor
                   initialDraft={editingSkill ? draftFromSkill(editingSkill) : EMPTY_DRAFT}

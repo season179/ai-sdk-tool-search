@@ -84,12 +84,10 @@ export function TasksPanel() {
 
   return (
     <details className="relative shrink-0" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="block cursor-pointer list-none rounded-md px-2 py-0.5 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-primary/30 [&::-webkit-details-marker]:hidden">
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <CalendarClock className="size-3.5" />
-          Tasks
-        </span>
-        <span className="block text-right tabular-nums text-sm font-semibold text-foreground">
+      <summary className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-primary/30 [&::-webkit-details-marker]:hidden">
+        <CalendarClock aria-hidden="true" className="size-3.5" />
+        Tasks
+        <span className="font-semibold tabular-nums text-foreground">
           {state.tasks.filter((task) => task.status === "active").length}
         </span>
       </summary>
