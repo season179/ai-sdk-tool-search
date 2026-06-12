@@ -179,12 +179,21 @@ function TaskCard({
             : "no run time"}
       </p>
 
-      <p className="mt-0.5 text-[11px] text-muted-foreground">
+      {task.payload.kind === "instruction" ? (
+        <p className="mt-0.5 text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground/80">Check-in</span> · round{" "}
+          {task.payload.round}/{task.payload.maxRounds}
+          {task.payload.cadenceSeconds ? ` · every ~${task.payload.cadenceSeconds}s` : ""}
+        </p>
+      ) : null}
+
+      <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
         Last run:{" "}
         {task.lastRun
           ? `${task.lastRun.status} ${formatTimestamp(task.lastRun.startedAt)}`
           : "never"}
         {task.lastRun?.error ? ` — ${task.lastRun.error}` : ""}
+        {getLastRunStatusUpdate(task) ? ` — ${getLastRunStatusUpdate(task)}` : ""}
       </p>
 
       {canCancel ? (
@@ -224,6 +233,21 @@ function TaskCard({
       ) : null}
     </div>
   );
+}
+
+/** Instruction runs store their verdict as run output; surface its statusUpdate. */
+function getLastRunStatusUpdate(task: ScheduledTask) {
+  const output = task.lastRun?.output;
+
+  if (output && typeof output === "object" && "statusUpdate" in output) {
+    const update = (output as { statusUpdate?: unknown }).statusUpdate;
+
+    if (typeof update === "string" && update.trim()) {
+      return update;
+    }
+  }
+
+  return null;
 }
 
 function getStatusClasses(status: ScheduledTask["status"]) {

@@ -10,7 +10,11 @@ import {
 } from "@/lib/scheduler/boss";
 import { getPool } from "@/lib/scheduler/db";
 import { getDefaultScheduleTimezone } from "@/lib/scheduler/env";
-import { parseScheduledTaskPayload, type ScheduledTaskPayload } from "@/lib/scheduler/execute";
+import {
+  clampChainDelaySeconds,
+  parseScheduledTaskPayload,
+  type ScheduledTaskPayload,
+} from "@/lib/scheduler/execute";
 
 export type ScheduledTaskStatus = "active" | "paused" | "completed" | "cancelled";
 
@@ -20,6 +24,7 @@ export type ScheduledTaskLastRun = {
   status: ScheduledTaskRunStatus;
   startedAt: string;
   completedAt: string | null;
+  output: unknown;
   error: string | null;
 };
 
@@ -89,6 +94,7 @@ type TaskRow = {
   last_run_status?: ScheduledTaskRunStatus | null;
   last_run_started_at?: Date | null;
   last_run_completed_at?: Date | null;
+  last_run_output?: unknown;
   last_run_error?: string | null;
 };
 
@@ -219,7 +225,14 @@ export async function resumeScheduledTask(id: string) {
     );
     await updateTaskStatus(id, "active");
   } else {
-    const runAt = task.runAt ? new Date(task.runAt) : null;
+    // Self-chaining instruction tasks have no meaningful run_at once the chain
+    // is moving: resume picks the chain back up after one cadence delay.
+    const runAt =
+      task.payload.kind === "instruction"
+        ? new Date(Date.now() + clampChainDelaySeconds(task.payload.cadenceSeconds) * 1000)
+        : task.runAt
+          ? new Date(task.runAt)
+          : null;
 
     if (!runAt || runAt.getTime() <= Date.now()) {
       throw new SchedulerInputError(
@@ -250,10 +263,11 @@ export async function listScheduledTasks() {
             r.status as last_run_status,
             r.started_at as last_run_started_at,
             r.completed_at as last_run_completed_at,
+            r.output as last_run_output,
             r.error as last_run_error
      from agent_scheduled_tasks t
      left join lateral (
-       select status, started_at, completed_at, error
+       select status, started_at, completed_at, output, error
        from agent_scheduled_task_runs
        where task_id = t.id
        order by started_at desc
@@ -357,6 +371,69 @@ export async function markTaskCompleted(id: string) {
   );
 }
 
+/** Abnormal chain stop (e.g. consecutive failures). No pending job to detach. */
+export async function markTaskCancelled(id: string) {
+  await getPool().query(
+    "update agent_scheduled_tasks set status = 'cancelled', updated_at = now() where id = $1 and status = 'active'",
+    [id],
+  );
+}
+
+/** Advance an instruction payload's round counter ahead of the next fire. */
+export async function setInstructionRound(id: string, round: number) {
+  await getPool().query(
+    `update agent_scheduled_tasks
+     set payload = jsonb_set(payload, '{round}', to_jsonb($2::int), true), updated_at = now()
+     where id = $1`,
+    [id, round],
+  );
+}
+
+/** Keep job_id pointing at the latest chained job so pause can cancel it. */
+export async function updateTaskJobId(id: string, jobId: string) {
+  await getPool().query(
+    "update agent_scheduled_tasks set job_id = $2, updated_at = now() where id = $1",
+    [id, jobId],
+  );
+}
+
+export async function getLatestCompletedRunOutput(taskId: string) {
+  const { rows } = await getPool().query<{ output: unknown }>(
+    `select output
+     from agent_scheduled_task_runs
+     where task_id = $1 and status = 'completed'
+     order by started_at desc
+     limit 1`,
+    [taskId],
+  );
+
+  return rows[0]?.output ?? null;
+}
+
+/** Length of the trailing run of 'failed' statuses, capped at `limit`. */
+export async function countConsecutiveFailedRuns(taskId: string, limit: number) {
+  const { rows } = await getPool().query<{ status: ScheduledTaskRunStatus }>(
+    `select status
+     from agent_scheduled_task_runs
+     where task_id = $1
+     order by started_at desc
+     limit $2`,
+    [taskId, limit],
+  );
+
+  let failures = 0;
+
+  for (const row of rows) {
+    if (row.status !== "failed") {
+      break;
+    }
+
+    failures += 1;
+  }
+
+  return failures;
+}
+
 // --- Internals --------------------------------------------------------------
 
 async function updateTaskStatus(id: string, status: ScheduledTaskStatus) {
@@ -447,6 +524,7 @@ function mapTaskRow(row: TaskRow): ScheduledTask {
           status: row.last_run_status,
           startedAt: row.last_run_started_at?.toISOString() ?? "",
           completedAt: row.last_run_completed_at?.toISOString() ?? null,
+          output: row.last_run_output ?? null,
           error: row.last_run_error ?? null,
         }
       : null,
