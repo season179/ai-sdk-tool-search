@@ -54,14 +54,19 @@ run wider.
 Tailwind's 4pt scale. Rhythm: tight within groups (`gap-1`–`gap-3`, `space-y-0.5` for list rows),
 generous between sections (`mt-6`–`mt-10`, `gap-10` between panes).
 
-- Page chrome: full-width header with a hairline `border-b`; content centered in `max-w-7xl` with
-  `px-4 sm:px-8 lg:px-10` gutters. Every page uses the same container.
+- Page chrome: full-width translucent header pinned to the top (`sticky top-0 z-30
+  bg-background/95 backdrop-blur`, no border); left side is the page title over a status row
+  (teal `size-1.5` dot + short runtime status), right side is the nav cluster
+  (`flex min-w-0 flex-wrap items-center justify-end gap-2`). Content centered in `max-w-7xl`
+  with `px-4 sm:px-8 lg:px-10` gutters. Every page uses the same container.
 - **Management surfaces are master-detail on wide screens**: a `lg:grid
   lg:grid-cols-[minmax(16rem,21rem)_minmax(0,1fr)]` split with a sticky list rail
-  (`lg:sticky lg:top-8`) and a content pane. Below `lg` the panes stack; selecting a list item
-  scrolls the detail into view.
+  (`lg:sticky lg:top-26`, clearing the pinned header) and a content pane. Below `lg` the panes
+  stack; selecting a list item scrolls the detail into view (`scroll-mt-40 sm:scroll-mt-24`,
+  clearing the wrapped mobile header).
 - Chat is the exception: a fixed-viewport shell (`h-dvh`, fixed header/composer) because the
-  conversation owns the page.
+  conversation owns the page. Its header is `fixed` rather than `sticky` but shares the same
+  look.
 - Forms group short fields side by side on `sm:` (`grid sm:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]`)
   instead of stacking everything full-width.
 

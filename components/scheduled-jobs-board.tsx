@@ -62,16 +62,16 @@ export function ScheduledJobsBoard() {
 
   return (
     <main className="min-h-dvh bg-background">
-      <header className="border-b border-border bg-background/95 px-4 py-3 sm:px-8 sm:py-4 lg:px-10">
+      <header className="sticky top-0 z-30 bg-background/95 px-4 py-3 backdrop-blur sm:px-8 sm:py-4 lg:px-10">
         <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-foreground">Scheduled tasks</p>
-            <p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">
-              Live runs, upcoming fires, and run history. Refreshes every{" "}
-              {REFRESH_INTERVAL_MS / 1000}s.
-            </p>
+            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+              <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
+              <span>Live · refreshes every {REFRESH_INTERVAL_MS / 1000}s</span>
+            </div>
           </div>
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             <SiteNav />
             <Button
               aria-label="Refresh scheduled jobs"

@@ -231,18 +231,20 @@ export default function SkillsPage() {
   }
 
   const isEmpty = skills !== null && skills.length === 0;
+  const enabledCount = skills?.filter((skill) => skill.isEnabled).length;
 
   return (
     <main className="min-h-dvh bg-background">
-      <header className="border-b border-border bg-background/95 px-4 py-3 sm:px-8 sm:py-4 lg:px-10">
+      <header className="sticky top-0 z-30 bg-background/95 px-4 py-3 backdrop-blur sm:px-8 sm:py-4 lg:px-10">
         <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-foreground">Skills</p>
-            <p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">
-              Reusable instructions the agent loads on demand
-            </p>
+            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+              <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
+              <span>{skills === null ? "Loading" : `${enabledCount} enabled`}</span>
+            </div>
           </div>
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             <SiteNav />
             <Button onClick={openCreate} size="sm" type="button">
               <Plus aria-hidden="true" className="size-3.5" />
@@ -292,7 +294,7 @@ export default function SkillsPage() {
           </div>
         ) : (
           <div className="lg:grid lg:grid-cols-[minmax(16rem,21rem)_minmax(0,1fr)] lg:items-start lg:gap-10">
-            <aside className="lg:sticky lg:top-8">
+            <aside className="lg:sticky lg:top-26">
               <p className="px-3 text-xs text-muted-foreground">
                 {skills.length} skill{skills.length === 1 ? "" : "s"}
               </p>
@@ -339,7 +341,7 @@ export default function SkillsPage() {
               </ul>
             </aside>
 
-            <div className="mt-8 min-w-0 scroll-mt-6 lg:mt-0" ref={detailRef}>
+            <div className="mt-8 min-w-0 scroll-mt-40 sm:scroll-mt-24 lg:mt-0" ref={detailRef}>
               {editorMode !== "closed" ? (
                 <SkillEditor
                   initialDraft={editingSkill ? draftFromSkill(editingSkill) : EMPTY_DRAFT}
