@@ -184,7 +184,7 @@ export default function ChatPage() {
       className="h-dvh overflow-hidden bg-background [--composer-height:8.75rem] [--header-height:3.5rem] sm:[--composer-height:10.125rem]"
       style={shellStyle}
     >
-      <h1 className="sr-only">OpenRouter Chat</h1>
+      <h1 className="sr-only">AI SDK App</h1>
       <SiteHeader
         actions={
           <>
